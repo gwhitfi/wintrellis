@@ -1,0 +1,112 @@
+mod border;
+mod config;
+mod display;
+mod focus;
+mod hidden;
+mod keyboard;
+mod layout;
+mod settings;
+mod shutdown;
+mod snap;
+mod style;
+mod tiler;
+mod tracker;
+mod window;
+
+use std::process::Command;
+
+use windows::Win32::System::Threading::GetCurrentThreadId;
+use windows::Win32::UI::WindowsAndMessaging::{
+    DispatchMessageW, GetMessageW, MSG, PostQuitMessage,
+};
+
+use keyboard::{Action, WM_ACTION};
+use layout::Direction;
+
+fn main() {
+    // Bring back anything a previous crashed run left hidden, before tracking windows.
+    hidden::recover();
+    hidden::install_panic_hook();
+    settings::load();
+    let _events = tracker::start();
+    keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
+    shutdown::install().unwrap();
+    let _display_listener = display::create_listener().unwrap();
+    snap::disable();
+    println!("Running. SUPER+Enter opens a terminal. SUPER+Esc or Ctrl+C quits.");
+
+    let mut msg = MSG::default();
+    while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
+        match msg.message {
+            WM_ACTION => {
+                if let Some(action) = Action::from_wparam(msg.wParam) {
+                    run(action);
+                }
+            }
+            tracker::WM_RETILE => tracker::retile(),
+            // Messages addressed to a window (our display listener) go to its handler.
+            _ => unsafe {
+                DispatchMessageW(&msg);
+            },
+        }
+    }
+
+    // GetMessageW returned false: we got WM_QUIT (SUPER+Esc or Ctrl+C). Undo our visible changes.
+    border::clear();
+    hidden::restore_all();
+    tracker::release_all();
+    snap::restore();
+    println!("Stopped.");
+}
+
+fn run(action: Action) {
+    match action {
+        Action::LaunchTerminal => launch_terminal(),
+        Action::FocusLeft => focus::focus(Direction::Left),
+        Action::FocusRight => focus::focus(Direction::Right),
+        Action::FocusUp => focus::focus(Direction::Up),
+        Action::FocusDown => focus::focus(Direction::Down),
+        Action::SwapLeft => focus::swap(Direction::Left),
+        Action::SwapRight => focus::swap(Direction::Right),
+        Action::SwapUp => focus::swap(Direction::Up),
+        Action::SwapDown => focus::swap(Direction::Down),
+        Action::Promote => focus::promote(),
+        Action::Workspace1 => tracker::switch_workspace(1),
+        Action::Workspace2 => tracker::switch_workspace(2),
+        Action::Workspace3 => tracker::switch_workspace(3),
+        Action::Workspace4 => tracker::switch_workspace(4),
+        Action::Workspace5 => tracker::switch_workspace(5),
+        Action::MoveToWorkspace1 => tracker::move_to_workspace(1),
+        Action::MoveToWorkspace2 => tracker::move_to_workspace(2),
+        Action::MoveToWorkspace3 => tracker::move_to_workspace(3),
+        Action::MoveToWorkspace4 => tracker::move_to_workspace(4),
+        Action::MoveToWorkspace5 => tracker::move_to_workspace(5),
+        Action::CloseWindow => focus::close(),
+        Action::ToggleFloating => tracker::toggle_floating(),
+        Action::ReloadConfig => {
+            settings::load();
+            tracker::restyle_all();
+            border::repaint();
+            tracker::retile();
+        }
+        Action::EditConfig => edit_config(),
+        // Ends the message loop the same way Ctrl+C does, so cleanup runs.
+        Action::Quit => unsafe { PostQuitMessage(0) },
+    }
+}
+
+/// Opens the settings file in Notepad specifically, not the default editor for .toml
+/// files, which might be an IDE that opens it inside some unrelated project.
+fn edit_config() {
+    let path = settings::path();
+    if let Err(err) = Command::new("notepad.exe").arg(&path).spawn() {
+        eprintln!("failed to open {} in Notepad: {err}", path.display());
+    }
+}
+
+fn launch_terminal() {
+    let terminal = settings::terminal();
+    if let Err(err) = Command::new(&terminal).spawn() {
+        eprintln!("failed to launch {terminal}: {err}");
+    }
+}

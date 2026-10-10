@@ -1,0 +1,50 @@
+# win-tile settings. Every hotkey uses the Win key (SUPER); add "shift+" for Shift too.
+#
+# Keys: a-z, 0-9, f1-f12, enter, space, escape, tab, backspace, delete,
+#       left, right, up, down, home, end, pageup, pagedown
+#
+# Actions: launch_terminal, close_window, toggle_floating, quit,
+#          reload_config, edit_config (opens this file in Notepad),
+#          focus_left/right/up/down, swap_left/right/up/down, promote,
+#          workspace_1 .. workspace_5, move_to_workspace_1 .. move_to_workspace_5
+
+[hotkeys]
+"enter" = "launch_terminal"
+"shift+enter" = "promote"
+"shift+q" = "close_window"
+"shift+space" = "toggle_floating"
+"escape" = "quit"
+"shift+r" = "reload_config"
+"shift+e" = "edit_config"
+
+"left" = "focus_left"
+"right" = "focus_right"
+"up" = "focus_up"
+"down" = "focus_down"
+
+"shift+left" = "swap_left"
+"shift+right" = "swap_right"
+"shift+up" = "swap_up"
+"shift+down" = "swap_down"
+
+"1" = "workspace_1"
+"2" = "workspace_2"
+"3" = "workspace_3"
+"4" = "workspace_4"
+"5" = "workspace_5"
+
+"shift+1" = "move_to_workspace_1"
+"shift+2" = "move_to_workspace_2"
+"shift+3" = "move_to_workspace_3"
+"shift+4" = "move_to_workspace_4"
+"shift+5" = "move_to_workspace_5"
+
+[settings]
+# Program Win+Enter opens.
+terminal = "wt.exe"
+# Pixels between tiled windows and around the screen edge.
+gap = 8
+# Focused window's border, as #RRGGBB.
+border_color = "#F97316"
+# Window corners: square, small, round, or default (Windows decides).
+corners = "square"
