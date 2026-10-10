@@ -49,6 +49,7 @@ thread_local! {
 pub fn retile() {
     RETILE_PENDING.set(false);
     tiler::retile(&tiled());
+    border::reposition();
 }
 
 pub fn is_managed(hwnd: HWND) -> bool {

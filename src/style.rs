@@ -6,21 +6,25 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_TRANSITIONS_FORCEDISABLED, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT,
     DWMWINDOWATTRIBUTE, DwmSetWindowAttribute,
 };
+use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 use windows::core::BOOL;
 
-use crate::settings;
+use crate::{settings, transparency};
 
 /// Styles a window that just became managed (or after settings were reloaded).
 pub fn apply(hwnd: HWND) {
     // No show/hide/restore animations: workspace switches are instant instead of fading.
     set(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, BOOL::from(true).0);
     set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, settings::corners());
+    let focused = unsafe { GetForegroundWindow() } == hwnd;
+    transparency::update(hwnd, focused);
 }
 
 /// Puts back everything `apply` changed.
 pub fn release(hwnd: HWND) {
     set(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, BOOL::from(false).0);
     set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT.0);
+    transparency::restore(hwnd);
 }
 
 /// All of these attributes take a 4-byte value.

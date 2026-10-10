@@ -17,8 +17,20 @@ pub struct Config {
     pub gap: i32,
     /// As Windows wants it: 0x00BBGGRR.
     pub border_color: u32,
+    /// Draw the focus border ourselves (works on every app) rather than recoloring
+    /// Windows' own thin border (which some apps overwrite).
+    pub overlay_border: bool,
+    /// Overlay border thickness in pixels.
+    pub border_width: i32,
+    /// Overlay border corner radius in pixels; `None` matches the window's `corners`.
+    pub border_radius: Option<i32>,
     /// Windows' corner preference value: 0 default, 1 square, 2 round, 3 small round.
     pub corners: i32,
+    /// Programs (lowercase file names, e.g. "discord.exe") whose windows turn
+    /// see-through while they don't have focus.
+    pub transparent_apps: Vec<String>,
+    /// How opaque those windows are while unfocused: 0 invisible .. 255 solid.
+    pub unfocused_alpha: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +48,8 @@ struct RawConfig {
     hotkeys: BTreeMap<String, String>,
     #[serde(default)]
     settings: RawSettings,
+    #[serde(default)]
+    transparency: RawTransparency,
 }
 
 #[derive(Default, Deserialize)]
@@ -44,7 +58,18 @@ struct RawSettings {
     terminal: Option<String>,
     gap: Option<i32>,
     border_color: Option<String>,
+    border_style: Option<String>,
+    border_width: Option<i32>,
+    border_radius: Option<i32>,
     corners: Option<String>,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawTransparency {
+    opacity: Option<f64>,
+    #[serde(default)]
+    apps: Vec<String>,
 }
 
 /// Parses the file's text. On failure, the error lists every problem found, one per line.
@@ -82,6 +107,33 @@ pub fn parse(text: &str) -> Result<Config, String> {
         0
     });
 
+    let style = raw.settings.border_style.as_deref().unwrap_or("overlay");
+    let overlay_border = match style.trim().to_ascii_lowercase().as_str() {
+        "overlay" => true,
+        "native" => false,
+        _ => {
+            errors.push(format!(
+                "border_style must be overlay or native, got \"{style}\""
+            ));
+            true
+        }
+    };
+    let border_width = raw.settings.border_width.unwrap_or(3);
+    if !(1..=20).contains(&border_width) {
+        errors.push(format!(
+            "border_width must be between 1 and 20, got {border_width}"
+        ));
+    }
+
+    let border_radius = raw.settings.border_radius;
+    if let Some(radius) = border_radius
+        && !(0..=50).contains(&radius)
+    {
+        errors.push(format!(
+            "border_radius must be between 0 and 50, got {radius}"
+        ));
+    }
+
     let corners_name = raw.settings.corners.as_deref().unwrap_or("square");
     let corners = match corners_name.trim().to_ascii_lowercase().as_str() {
         "default" => 0,
@@ -96,6 +148,20 @@ pub fn parse(text: &str) -> Result<Config, String> {
         }
     };
 
+    let opacity = raw.transparency.opacity.unwrap_or(0.9);
+    if !(0.1..=1.0).contains(&opacity) {
+        errors.push(format!(
+            "opacity must be between 0.1 and 1.0, got {opacity}"
+        ));
+    }
+    let unfocused_alpha = (opacity.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let transparent_apps = raw
+        .transparency
+        .apps
+        .iter()
+        .map(|app| app.trim().to_ascii_lowercase())
+        .collect();
+
     if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
@@ -104,7 +170,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
         terminal: raw.settings.terminal.unwrap_or_else(|| "wt.exe".into()),
         gap,
         border_color,
+        overlay_border,
+        border_width,
+        border_radius,
         corners,
+        transparent_apps,
+        unfocused_alpha,
     })
 }
 
@@ -225,6 +296,45 @@ mod tests {
         assert_eq!(config.gap, 8);
         assert_eq!(config.border_color, 0x0016_73F9); // #F97316
         assert_eq!(config.corners, 1); // square
+        assert!(config.overlay_border);
+        assert_eq!(config.border_width, 3);
+        assert_eq!(config.border_radius, None);
+        assert_eq!(config.transparent_apps, ["discord.exe", "steam.exe"]);
+        assert_eq!(config.unfocused_alpha, 230); // 0.9
+    }
+
+    #[test]
+    fn transparency_parses() {
+        let config = parse("[transparency]\nopacity = 0.5\napps = [\" Discord.EXE \"]").unwrap();
+        assert_eq!(config.transparent_apps, ["discord.exe"]);
+        assert_eq!(config.unfocused_alpha, 128);
+
+        let empty = parse("").unwrap();
+        assert!(empty.transparent_apps.is_empty());
+
+        assert!(parse("[transparency]\nopacity = 0.0").is_err());
+        assert!(parse("[transparency]\nopacity = 1.5").is_err());
+        assert!(parse("[transparency]\napp = []").is_err()); // misspelled
+    }
+
+    #[test]
+    fn border_radius_parses() {
+        let radius = |text: &str| parse(&format!("[settings]\n{text}")).map(|c| c.border_radius);
+        assert_eq!(radius(""), Ok(None));
+        assert_eq!(radius("border_radius = 0"), Ok(Some(0)));
+        assert_eq!(radius("border_radius = 12"), Ok(Some(12)));
+        assert!(radius("border_radius = -1").is_err());
+        assert!(radius("border_radius = 99").is_err());
+    }
+
+    #[test]
+    fn border_style_and_width_parse() {
+        let native = parse("[settings]\nborder_style = \"Native\"\nborder_width = 6").unwrap();
+        assert!(!native.overlay_border);
+        assert_eq!(native.border_width, 6);
+        assert!(parse("[settings]\nborder_style = \"thick\"").is_err());
+        assert!(parse("[settings]\nborder_width = 0").is_err());
+        assert!(parse("[settings]\nborder_width = 50").is_err());
     }
 
     #[test]

@@ -46,5 +46,19 @@ terminal = "wt.exe"
 gap = 8
 # Focused window's border, as #RRGGBB.
 border_color = "#F97316"
+# "overlay": drawn by win-tile, works on every app, `border_width` pixels thick.
+# "native": recolors Windows' own 1px border; some apps (Windows Terminal, Discord) ignore it.
+border_style = "overlay"
+border_width = 3
+# Overlay border corner radius in pixels (0 = square). Leave it out to match `corners`.
+# border_radius = 12
 # Window corners: square, small, round, or default (Windows decides).
 corners = "square"
+
+[transparency]
+# Windows of these programs turn see-through while they don't have focus.
+# Some apps draw incorrectly when see-through (often games and Chromium/Electron apps);
+# if one flickers or goes black, take it off the list.
+apps = ["discord.exe", "steam.exe"]
+# How solid they are while unfocused: 0.1 (barely visible) to 1.0 (solid).
+opacity = 0.9

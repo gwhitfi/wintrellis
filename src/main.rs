@@ -1,3 +1,6 @@
+// Declared first so the `log!` macro is usable in every module below.
+#[macro_use]
+mod log;
 mod border;
 mod config;
 mod display;
@@ -5,12 +8,14 @@ mod focus;
 mod hidden;
 mod keyboard;
 mod layout;
+mod overlay;
 mod settings;
 mod shutdown;
 mod snap;
 mod style;
 mod tiler;
 mod tracker;
+mod transparency;
 mod window;
 
 use std::process::Command;
@@ -24,10 +29,12 @@ use keyboard::{Action, WM_ACTION};
 use layout::Direction;
 
 fn main() {
+    log::init();
     // Bring back anything a previous crashed run left hidden, before tracking windows.
     hidden::recover();
     hidden::install_panic_hook();
     settings::load();
+    overlay::create().unwrap();
     let _events = tracker::start();
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();

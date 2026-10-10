@@ -13,7 +13,12 @@ static CURRENT: RwLock<Config> = RwLock::new(Config {
     terminal: String::new(),
     gap: 8,
     border_color: 0,
+    overlay_border: true,
+    border_width: 3,
+    border_radius: None,
     corners: 0,
+    transparent_apps: Vec::new(),
+    unfocused_alpha: 255,
 });
 
 pub fn path() -> PathBuf {
@@ -82,6 +87,26 @@ pub fn gap() -> i32 {
 
 pub fn border_color() -> u32 {
     read().border_color
+}
+
+pub fn overlay_border() -> bool {
+    read().overlay_border
+}
+
+pub fn border_width() -> i32 {
+    read().border_width
+}
+
+pub fn border_radius() -> Option<i32> {
+    read().border_radius
+}
+
+pub fn transparent_apps() -> Vec<String> {
+    read().transparent_apps.clone()
+}
+
+pub fn unfocused_alpha() -> u8 {
+    read().unfocused_alpha
 }
 
 pub fn corners() -> i32 {
