@@ -25,6 +25,7 @@ static ACTION_THREAD: AtomicU32 = AtomicU32::new(0);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     LaunchTerminal,
+    OpenLauncher,
     FocusLeft,
     FocusRight,
     FocusUp,
@@ -53,8 +54,9 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order, so an action survives a round trip through `wParam`.
-    pub const ALL: [Action; 25] = [
+    pub const ALL: [Action; 26] = [
         Action::LaunchTerminal,
+        Action::OpenLauncher,
         Action::FocusLeft,
         Action::FocusRight,
         Action::FocusUp,

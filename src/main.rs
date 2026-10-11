@@ -5,12 +5,14 @@
 // Declared first so the `log!` macro is usable in every module below.
 #[macro_use]
 mod log;
+mod autostart;
 mod border;
 mod config;
 mod display;
 mod focus;
 mod hidden;
 mod keyboard;
+mod launcher;
 mod layout;
 mod overlay;
 mod settings;
@@ -71,6 +73,7 @@ fn main() {
 fn run(action: Action) {
     match action {
         Action::LaunchTerminal => launch_terminal(),
+        Action::OpenLauncher => launcher::show(),
         Action::FocusLeft => focus::focus(Direction::Left),
         Action::FocusRight => focus::focus(Direction::Right),
         Action::FocusUp => focus::focus(Direction::Up),

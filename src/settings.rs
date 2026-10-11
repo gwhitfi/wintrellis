@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{RwLock, RwLockReadGuard};
 
-use crate::config::{self, Config};
+use crate::config::{self, Config, Favorite};
 use crate::keyboard::Action;
 
 static CURRENT: RwLock<Config> = RwLock::new(Config {
@@ -19,6 +19,7 @@ static CURRENT: RwLock<Config> = RwLock::new(Config {
     corners: 0,
     transparent_apps: Vec::new(),
     unfocused_alpha: 255,
+    launcher: Vec::new(),
 });
 
 pub fn path() -> PathBuf {
@@ -79,6 +80,11 @@ pub fn action_for(key: u16, shift: bool) -> Option<Action> {
 
 pub fn terminal() -> String {
     read().terminal.clone()
+}
+
+/// A copy, so the settings lock isn't held while the launcher menu is open.
+pub fn launcher() -> Vec<Favorite> {
+    read().launcher.clone()
 }
 
 pub fn gap() -> i32 {

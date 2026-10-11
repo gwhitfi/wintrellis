@@ -31,6 +31,19 @@ pub struct Config {
     pub transparent_apps: Vec<String>,
     /// How opaque those windows are while unfocused: 0 invisible .. 255 solid.
     pub unfocused_alpha: u8,
+    /// Apps in the launcher menu, in menu order.
+    pub launcher: Vec<Favorite>,
+}
+
+/// One `[[launcher]]` entry: an app in the launcher menu.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Favorite {
+    /// Shown in the menu.
+    pub name: String,
+    /// What to open: a program ("firefox.exe"), a full path, a link like
+    /// "steam://open/main", or "shell:AppsFolder\..." for Store apps.
+    pub open: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +63,8 @@ struct RawConfig {
     settings: RawSettings,
     #[serde(default)]
     transparency: RawTransparency,
+    #[serde(default)]
+    launcher: Vec<Favorite>,
 }
 
 #[derive(Default, Deserialize)]
@@ -162,6 +177,12 @@ pub fn parse(text: &str) -> Result<Config, String> {
         .map(|app| app.trim().to_ascii_lowercase())
         .collect();
 
+    for (i, favorite) in raw.launcher.iter().enumerate() {
+        if favorite.name.trim().is_empty() || favorite.open.trim().is_empty() {
+            errors.push(format!("launcher entry {} needs a name and open", i + 1));
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors.join("\n"));
     }
@@ -176,6 +197,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         corners,
         transparent_apps,
         unfocused_alpha,
+        launcher: raw.launcher,
     })
 }
 
@@ -233,8 +255,9 @@ fn parse_color(text: &str) -> Result<u32, String> {
     Ok((b << 16) | (g << 8) | r)
 }
 
-const ACTION_NAMES: [(&str, Action); 25] = [
+const ACTION_NAMES: [(&str, Action); 26] = [
     ("launch_terminal", Action::LaunchTerminal),
+    ("open_launcher", Action::OpenLauncher),
     ("focus_left", Action::FocusLeft),
     ("focus_right", Action::FocusRight),
     ("focus_up", Action::FocusUp),
@@ -315,6 +338,28 @@ mod tests {
         assert!(parse("[transparency]\nopacity = 0.0").is_err());
         assert!(parse("[transparency]\nopacity = 1.5").is_err());
         assert!(parse("[transparency]\napp = []").is_err()); // misspelled
+    }
+
+    #[test]
+    fn launcher_parses() {
+        let text = r#"
+            [[launcher]]
+            name = "Firefox"
+            open = "firefox.exe"
+
+            [[launcher]]
+            name = "Steam"
+            open = "steam://open/main"
+        "#;
+        let config = parse(text).unwrap();
+        let names: Vec<&str> = config.launcher.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["Firefox", "Steam"]);
+        assert_eq!(config.launcher[1].open, "steam://open/main");
+
+        assert!(parse("").unwrap().launcher.is_empty());
+        assert!(parse("[[launcher]]\nname = \"Firefox\"").is_err()); // no open
+        assert!(parse("[[launcher]]\nname = \" \"\nopen = \"x.exe\"").is_err());
+        assert!(parse("[[launcher]]\nname = \"A\"\nopen = \"a.exe\"\nargs = \"\"").is_err());
     }
 
     #[test]

@@ -11,11 +11,12 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, GetSystemMetrics, HICON, IMAGE_ICON,
-    LR_DEFAULTCOLOR, LoadImageW, MF_SEPARATOR, MF_STRING, SM_CXSMICON, SM_CYSMICON,
+    LR_DEFAULTCOLOR, LoadImageW, MF_CHECKED, MF_SEPARATOR, MF_STRING, SM_CXSMICON, SM_CYSMICON,
     SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP,
 };
 use windows::core::{PCWSTR, w};
 
+use crate::autostart;
 use crate::keyboard::Action;
 
 /// Sent to the listener window when the mouse does something on the tray icon.
@@ -46,6 +47,10 @@ pub fn remove() {
     }
 }
 
+/// Menu ID for "Start with Windows". It's handled here, not as an `Action`, so it sits
+/// above the action IDs (index + 1).
+const AUTOSTART_ID: usize = 1000;
+
 /// Shows the right-click menu at the mouse and waits for a choice. Returns the chosen
 /// action, or `None` if the menu was dismissed.
 pub fn show_menu(owner: HWND) -> Option<Action> {
@@ -59,6 +64,14 @@ pub fn show_menu(owner: HWND) -> Option<Action> {
             MF_STRING,
             id(Action::ReloadConfig),
             w!("Reload settings"),
+        );
+        let autostart_on = autostart::is_enabled();
+        let flags = if autostart_on { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let _ = AppendMenuW(
+            menu,
+            flags,
+            AUTOSTART_ID,
+            w!("Start with Windows"),
         );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, id(Action::Quit), w!("Quit WinTrellis"));
@@ -77,6 +90,14 @@ pub fn show_menu(owner: HWND) -> Option<Action> {
             None,
         );
         let _ = DestroyMenu(menu);
+        if chosen.0 as usize == AUTOSTART_ID {
+            if autostart_on {
+                autostart::disable();
+            } else {
+                autostart::enable();
+            }
+            return None;
+        }
         let index = (chosen.0 as usize).checked_sub(1)?;
         Action::from_wparam(WPARAM(index))
     }

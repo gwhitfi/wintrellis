@@ -149,7 +149,7 @@ fn group_by_monitor(windows: &[HWND]) -> Vec<(HMONITOR, Vec<HWND>)> {
 }
 
 /// The monitor's area minus the taskbar.
-fn work_area(monitor: HMONITOR) -> Option<Rect> {
+pub fn work_area(monitor: HMONITOR) -> Option<Rect> {
     let mut info = MONITORINFO {
         cbSize: size_of::<MONITORINFO>() as u32,
         ..Default::default()
