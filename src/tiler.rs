@@ -1,13 +1,14 @@
 use std::cell::RefCell;
 
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+    GetMonitorInfoW, HMONITOR, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint,
+    MonitorFromWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    BeginDeferWindowPos, DeferWindowPos, EndDeferWindowPos, GetWindowRect, IsZoomed, SW_RESTORE,
-    SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
+    BeginDeferWindowPos, DeferWindowPos, EndDeferWindowPos, GetCursorPos, GetWindowRect, IsZoomed,
+    SW_RESTORE, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
 };
 
 use crate::layout::{self, Rect, Splits};
@@ -115,6 +116,13 @@ pub fn same_monitor(a: HWND, b: HWND) -> bool {
 
 pub fn monitor_of(hwnd: HWND) -> HMONITOR {
     unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
+}
+
+/// The monitor the mouse pointer is on.
+pub fn monitor_at_cursor() -> HMONITOR {
+    let mut point = POINT::default();
+    let _ = unsafe { GetCursorPos(&mut point) };
+    unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) }
 }
 
 /// If `a` and `b` are on different monitors, moves each onto the other's spot. Retiling

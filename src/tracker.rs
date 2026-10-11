@@ -24,6 +24,9 @@ struct Entry {
     workspace: u8,
     /// Floating windows stay managed (workspaces, focus, border) but aren't tiled.
     floating: bool,
+    /// Set when the window floats only because it didn't fit: how many windows were
+    /// tiled on its monitor then (itself included). Once there are fewer, it's retried.
+    too_big_with: Option<usize>,
 }
 
 thread_local! {
@@ -37,21 +40,33 @@ thread_local! {
     /// Each workspace's dividing lines, once resized. Workspaces not listed are even.
     static SPLITS: RefCell<Vec<((HMONITOR, u8), Splits)>> = const { RefCell::new(Vec::new()) };
 
-    /// The monitor of the managed window that last had focus. Workspace hotkeys act on
-    /// this monitor. Tracked ourselves because after switching to an empty workspace,
-    /// Windows may hand focus to a window on another monitor.
+    /// The monitor of the managed window that last had focus, or the one the desktop was
+    /// clicked on. Workspace hotkeys act on this monitor. Tracked ourselves because after
+    /// switching to an empty workspace, Windows may hand focus to a window on another
+    /// monitor.
     static FOCUSED_MONITOR: Cell<Option<HMONITOR>> = const { Cell::new(None) };
+
+    /// True while the desktop is getting focus because we focused it (an empty workspace),
+    /// not because it was clicked. Its focus event then leaves `FOCUSED_MONITOR` alone.
+    static FOCUSING_DESKTOP: Cell<bool> = const { Cell::new(false) };
 
     /// The window being dragged/resized with the mouse, and the monitor it started on.
     static DRAG_START: Cell<Option<(HWND, HMONITOR)>> = const { Cell::new(None) };
 
     /// True while a WM_RETILE is queued, so a burst of changes causes only one retile.
     static RETILE_PENDING: Cell<bool> = const { Cell::new(false) };
+
+    /// Windows added since the last retile, still to be given a slot that fits them.
+    static NEW_WINDOWS: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Handles WM_RETILE: moves every managed window into its slot.
 pub fn retile() {
     RETILE_PENDING.set(false);
+    for hwnd in NEW_WINDOWS.take() {
+        place(hwnd);
+    }
+    retry_too_big();
     let too_big = tiler::retile(&tiled(), shown_splits);
     for hwnd in too_big {
         float_too_big(hwnd);
@@ -60,12 +75,14 @@ pub fn retile() {
 }
 
 /// A window that can't shrink to fit its slot (it has a minimum size) floats instead,
-/// centered, and the others are retiled without it. Win+Shift+Space tries tiling it
-/// again, e.g. once there's more room.
+/// centered, and the others are retiled without it. It's tiled again by itself once
+/// there's more room (see `retry_too_big`), or with Win+Shift+Space.
 fn float_too_big(hwnd: HWND) {
+    let tiled_with_it = tiled_on(tiler::monitor_of(hwnd)).len();
     MANAGED.with_borrow_mut(|managed| {
         if let Some(entry) = managed.iter_mut().find(|e| e.hwnd == hwnd) {
             entry.floating = true;
+            entry.too_big_with = Some(tiled_with_it);
         }
     });
     log!(
@@ -74,6 +91,92 @@ fn float_too_big(hwnd: HWND) {
     );
     tiler::center(hwnd);
     request_retile();
+}
+
+/// Gives a new window the last slot on its monitor where every window, it included,
+/// fits (going by the apps' minimum sizes). Usually that's the end, its slot as
+/// appended; an app with a large minimum size (Spotify, Discord) moves up to a bigger
+/// slot instead and the windows after it shift down one. If no slot works, it stays at
+/// the end and the retile floats it.
+fn place(hwnd: HWND) {
+    if !is_managed(hwnd) || is_floating(hwnd) {
+        return; // closed again, or floating
+    }
+    let monitor = tiler::monitor_of(hwnd);
+    let others: Vec<HWND> = tiled_on(monitor)
+        .into_iter()
+        .filter(|&h| h != hwnd)
+        .collect();
+    if others.len() >= layout::MAX_TILED {
+        return; // no slot left for it anyway: it floats as a 7th+ window
+    }
+    let splits = shown_splits(monitor);
+    let fits_at = |k: usize| {
+        let mut windows = others.clone();
+        windows.insert(k, hwnd);
+        tiler::fits(&windows, splits)
+    };
+    // From the end backwards, so the existing arrangement moves as little as possible.
+    let Some(k) = (0..=others.len()).rev().find(|&k| fits_at(k)) else {
+        return;
+    };
+    if k == others.len() {
+        return; // the end fits: keep it there
+    }
+    MANAGED.with_borrow_mut(|managed| {
+        let Some(from) = managed.iter().position(|e| e.hwnd == hwnd) else {
+            return;
+        };
+        let entry = managed.remove(from);
+        // Just before the window that held slot `k`, so it takes over that slot.
+        let to = managed
+            .iter()
+            .position(|e| e.hwnd == others[k])
+            .unwrap_or(managed.len());
+        managed.insert(to, entry);
+    });
+    log!(
+        "{hwnd:?} {} placed in slot {k}, where it fits",
+        window::title(hwnd)
+    );
+}
+
+/// Puts windows that float only because they didn't fit back into the layout, once
+/// fewer windows are tiled on their monitor than when they were floated (one closed or
+/// moved away) and every app's minimum size says they'd now fit. Checked before
+/// anything moves, so a window that still doesn't fit stays put instead of flickering.
+fn retry_too_big() {
+    let waiting: Vec<(HWND, usize)> = on_screen()
+        .filter_map(|e| Some((e.hwnd, e.too_big_with?)))
+        .collect();
+    for (hwnd, tiled_then) in waiting {
+        let monitor = tiler::monitor_of(hwnd);
+        // In list order, so each window is checked against the slot it would get.
+        let with_it: Vec<HWND> = on_screen()
+            .filter(|e| (!e.floating || e.hwnd == hwnd) && tiler::monitor_of(e.hwnd) == monitor)
+            .map(|e| e.hwnd)
+            .collect();
+        if with_it.len() < tiled_then
+            && with_it.len() <= layout::MAX_TILED
+            && tiler::fits(&with_it, shown_splits(monitor))
+        {
+            MANAGED.with_borrow_mut(|managed| {
+                if let Some(entry) = managed.iter_mut().find(|e| e.hwnd == hwnd) {
+                    entry.floating = false;
+                    entry.too_big_with = None;
+                }
+            });
+            log!("{hwnd:?} {} fits again, tiling it", window::title(hwnd));
+        }
+    }
+}
+
+/// The tiled windows on `monitor`'s active workspace, in slot order.
+fn tiled_on(monitor: HMONITOR) -> Vec<HWND> {
+    tiled()
+        .into_iter()
+        .filter(|&hwnd| tiler::monitor_of(hwnd) == monitor)
+        .collect()
 }
 
 /// The dividing lines of the workspace `monitor` is showing.
@@ -182,12 +285,25 @@ pub fn switch_workspace(n: u8) {
     }
     log!("workspace {n} ({} windows)", showing.len());
     // An empty workspace focuses the desktop, so focus doesn't jump to another monitor.
-    let target = showing
-        .first()
-        .copied()
-        .unwrap_or_else(|| unsafe { GetShellWindow() });
-    let _ = unsafe { SetForegroundWindow(target) };
+    match showing.first() {
+        Some(&hwnd) => {
+            let _ = unsafe { SetForegroundWindow(hwnd) };
+        }
+        None => focus_desktop(),
+    }
     request_retile();
+}
+
+/// Focuses the desktop without changing which monitor workspace hotkeys act on (the
+/// desktop spans every monitor, so its focus event can't tell which one is meant).
+fn focus_desktop() {
+    let desktop = unsafe { GetShellWindow() };
+    if unsafe { GetForegroundWindow() } == desktop {
+        return; // no focus change, so no event to skip
+    }
+    if unsafe { SetForegroundWindow(desktop) }.as_bool() {
+        FOCUSING_DESKTOP.set(true);
+    }
 }
 
 /// Sends the focused window to workspace `n` on its monitor. It's hidden until that
@@ -209,11 +325,15 @@ pub fn move_to_workspace(n: u8) {
     });
     hidden::hide(hwnd);
     log!("moved {hwnd:?} to workspace {n}");
-    let next = managed()
+    match managed()
         .into_iter()
         .find(|&h| tiler::monitor_of(h) == monitor)
-        .unwrap_or_else(|| unsafe { GetShellWindow() });
-    let _ = unsafe { SetForegroundWindow(next) };
+    {
+        Some(next) => {
+            let _ = unsafe { SetForegroundWindow(next) };
+        }
+        None => focus_desktop(),
+    }
     request_retile();
 }
 
@@ -258,20 +378,28 @@ pub fn swap(a: HWND, b: HWND) {
 
 /// Moves `hwnd` to the front of the list, which is slot 0 on its monitor. If it's
 /// already first on its monitor, moves the next window on that monitor to the front.
+/// A floating (or 7th+) window joins the layout there: slot 0 is the biggest, so an
+/// app with a large minimum size fits best. If it still doesn't, the retile floats it
+/// again.
 pub fn promote(hwnd: HWND) {
-    let list = tiled();
-    let on_same_monitor: Vec<HWND> = list
-        .into_iter()
-        .filter(|&other| tiler::same_monitor(other, hwnd))
-        .collect();
-    let target = match on_same_monitor.as_slice() {
+    if !is_managed(hwnd) {
+        return;
+    }
+    let target = match tiled_on(tiler::monitor_of(hwnd)).as_slice() {
         [first, second, ..] if *first == hwnd => *second,
-        _ if on_same_monitor.contains(&hwnd) => hwnd,
-        _ => return, // not managed
+        _ => hwnd,
     };
     MANAGED.with_borrow_mut(|managed| {
         if let Some(i) = managed.iter().position(|e| e.hwnd == target) {
-            let entry = managed.remove(i);
+            let mut entry = managed.remove(i);
+            if entry.floating {
+                log!(
+                    "{target:?} {} promoted into the layout",
+                    window::title(target)
+                );
+            }
+            entry.floating = false;
+            entry.too_big_with = None;
             managed.insert(0, entry);
         }
     });
@@ -308,6 +436,8 @@ pub fn toggle_floating() {
     let floating = MANAGED.with_borrow_mut(|managed| {
         let entry = managed.iter_mut().find(|e| e.hwnd == hwnd)?;
         entry.floating = !entry.floating;
+        // Your choice now, so it's no longer retried automatically.
+        entry.too_big_with = None;
         Some(entry.floating)
     });
     match floating {
@@ -337,6 +467,8 @@ pub fn start() -> [HWINEVENTHOOK; 5] {
     for hwnd in tiler::order_by_position(&existing) {
         add(hwnd);
     }
+    // They keep the slots they're already in, not the ones that fit best.
+    NEW_WINDOWS.take();
     border::refresh();
     [
         // DESTROY, SHOW, HIDE are consecutive event IDs, so one hook covers all three.
@@ -383,6 +515,9 @@ unsafe extern "system" fn on_win_event(
         EVENT_SYSTEM_FOREGROUND => {
             if is_managed(hwnd) {
                 FOCUSED_MONITOR.set(Some(tiler::monitor_of(hwnd)));
+            } else if window::is_desktop(hwnd) && !FOCUSING_DESKTOP.replace(false) {
+                // Clicked: the desktop covers every monitor, so use the one under the mouse.
+                FOCUSED_MONITOR.set(Some(tiler::monitor_at_cursor()));
             }
         }
         EVENT_OBJECT_SHOW | EVENT_OBJECT_UNCLOAKED | EVENT_SYSTEM_MINIMIZEEND
@@ -440,8 +575,10 @@ fn add(hwnd: HWND) {
                 hwnd,
                 workspace,
                 floating: false,
+                too_big_with: None,
             });
             style::apply(hwnd);
+            NEW_WINDOWS.with_borrow_mut(|new| new.push(hwnd));
             log!(
                 "+ {hwnd:?} {}  ({} managed)",
                 window::title(hwnd),

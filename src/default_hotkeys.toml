@@ -14,7 +14,7 @@
 
 [hotkeys]
 "t" = "open_launcher" # Custom WinTrellis program launcher
-"shift+enter" = "promote" # Focused window moves to the large left window
+"shift+enter" = "promote" # Focused window moves to the large left window (a floating one joins the layout there)
 "shift+q" = "close_window" # Close focused window
 "shift+space" = "toggle_floating" # Focused window moves out of snap grid and floats in center of screen
 "escape" = "quit" # Exit WinTrellis program

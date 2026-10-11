@@ -62,6 +62,11 @@ pub fn skip_reason(hwnd: HWND) -> Option<&'static str> {
     }
 }
 
+/// The desktop (wallpaper and icons). It's one window covering every monitor.
+pub fn is_desktop(hwnd: HWND) -> bool {
+    matches!(class_name(hwnd).as_str(), "Progman" | "WorkerW")
+}
+
 /// Cloaked windows are hidden by Windows itself (suspended UWP apps, other virtual desktops).
 fn is_cloaked(hwnd: HWND) -> bool {
     let mut cloaked: u32 = 0;
