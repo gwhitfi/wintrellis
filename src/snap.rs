@@ -1,6 +1,6 @@
 //! Turns off Windows' own window snapping (drag to the top to maximize, the Snap
-//! Layouts bar, drag to an edge to half-snap) while win-tile runs, since it fights the
-//! tiling. Only for this session: the saved setting isn't touched, so if win-tile
+//! Layouts bar, drag to an edge to half-snap) while WinTrellis runs, since it fights the
+//! tiling. Only for this session: the saved setting isn't touched, so if WinTrellis
 //! crashes, snapping comes back at the next sign-in at the latest.
 
 use std::cell::Cell;

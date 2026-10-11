@@ -1,5 +1,5 @@
 //! How managed windows look: Windows 11 per-window settings we change while a window is
-//! managed, and put back when it isn't (minimized, closed, or win-tile quits).
+//! managed, and put back when it isn't (minimized, closed, or WinTrellis quits).
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{

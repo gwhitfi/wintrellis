@@ -1,5 +1,5 @@
 //! The only place windows get hidden or unhidden. Every hidden window is written to a
-//! file *before* it's hidden, so if win-tile crashes or is killed, the next start (or
+//! file *before* it's hidden, so if WinTrellis crashes or is killed, the next start (or
 //! the panic hook) can bring it back. Losing a hidden window is the worst failure mode.
 
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ thread_local! {
 }
 
 fn record_path() -> PathBuf {
-    std::env::temp_dir().join("win-tile-hidden.txt")
+    std::env::temp_dir().join("wintrellis-hidden.txt")
 }
 
 pub fn hide(hwnd: HWND) {
@@ -84,6 +84,8 @@ pub fn recover() {
 pub fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
+        // The default hook prints to stderr, which is gone once there's no console.
+        log!("{info}");
         recover();
         default_hook(info);
     }));
@@ -95,6 +97,6 @@ fn save(hidden: &[HWND]) {
         .map(|hwnd| format!("{}\n", hwnd.0 as usize))
         .collect();
     if let Err(err) = fs::write(record_path(), contents) {
-        eprintln!("failed to record hidden windows: {err}");
+        log!("failed to record hidden windows: {err}");
     }
 }

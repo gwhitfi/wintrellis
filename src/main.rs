@@ -1,3 +1,7 @@
+// Release builds run in the background with no console window; dev builds keep the
+// console so output is visible live. (The log file gets everything either way.)
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // Declared first so the `log!` macro is usable in every module below.
 #[macro_use]
 mod log;
@@ -16,6 +20,7 @@ mod style;
 mod tiler;
 mod tracker;
 mod transparency;
+mod tray;
 mod window;
 
 use std::process::Command;
@@ -38,9 +43,10 @@ fn main() {
     let _events = tracker::start();
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();
-    let _display_listener = display::create_listener().unwrap();
+    let display_listener = display::create_listener().unwrap();
+    tray::add(display_listener);
     snap::disable();
-    println!("Running. SUPER+Enter opens a terminal. SUPER+Esc or Ctrl+C quits.");
+    log!("WinTrellis running. SUPER+Enter opens a terminal. SUPER+Esc or Ctrl+C quits.");
 
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
@@ -58,12 +64,8 @@ fn main() {
         }
     }
 
-    // GetMessageW returned false: we got WM_QUIT (SUPER+Esc or Ctrl+C). Undo our visible changes.
-    border::clear();
-    hidden::restore_all();
-    tracker::release_all();
-    snap::restore();
-    println!("Stopped.");
+    // GetMessageW returned false: we got WM_QUIT (SUPER+Esc or Ctrl+C).
+    shutdown::cleanup();
 }
 
 fn run(action: Action) {
@@ -107,13 +109,13 @@ fn run(action: Action) {
 fn edit_config() {
     let path = settings::path();
     if let Err(err) = Command::new("notepad.exe").arg(&path).spawn() {
-        eprintln!("failed to open {} in Notepad: {err}", path.display());
+        log!("failed to open {} in Notepad: {err}", path.display());
     }
 }
 
 fn launch_terminal() {
     let terminal = settings::terminal();
     if let Err(err) = Command::new(&terminal).spawn() {
-        eprintln!("failed to launch {terminal}: {err}");
+        log!("failed to launch {terminal}: {err}");
     }
 }

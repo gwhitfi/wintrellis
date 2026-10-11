@@ -1,0 +1,7 @@
+#define CREATEPROCESS_MANIFEST_RESOURCE_ID 1
+#define RT_MANIFEST 24
+
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "wintrellis.manifest"
+
+// The lowest-numbered icon is the one Explorer shows for the .exe.
+1 ICON "wintrellis.ico"

@@ -8,6 +8,8 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
 use windows::core::BOOL;
 
+use crate::{border, hidden, snap, tracker, tray};
+
 /// The thread running the message loop, which must do the cleanup.
 static MAIN_THREAD: AtomicU32 = AtomicU32::new(0);
 
@@ -27,4 +29,16 @@ unsafe extern "system" fn on_console_event(_event: u32) -> BOOL {
     // returns. Waiting gives `main` time to clean up; it exits the process when done.
     thread::sleep(Duration::from_secs(5));
     true.into()
+}
+
+/// Undoes all our visible changes: unhides every window, resets borders, styles and
+/// Windows Snap. Runs when the message loop ends, or right away when Windows is
+/// logging off or shutting down (see `display.rs`).
+pub fn cleanup() {
+    border::clear();
+    hidden::restore_all();
+    tracker::release_all();
+    snap::restore();
+    tray::remove();
+    log!("Stopped.");
 }

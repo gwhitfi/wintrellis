@@ -47,7 +47,7 @@ pub fn retile(windows: &[HWND]) {
 }
 
 /// Reorders windows so each keeps the slot it currently covers, so an existing
-/// arrangement survives restarting win-tile. Used once, on startup.
+/// arrangement survives restarting WinTrellis. Used once, on startup.
 pub fn order_by_position(windows: &[HWND]) -> Vec<HWND> {
     let mut ordered = Vec::with_capacity(windows.len());
     for (monitor, group) in group_by_monitor(windows) {

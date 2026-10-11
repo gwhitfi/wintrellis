@@ -1,4 +1,4 @@
-//! The settings currently in effect, loaded from `%APPDATA%\win-tile\hotkeys.toml`.
+//! The settings currently in effect, loaded from `%APPDATA%\WinTrellis\hotkeys.toml`.
 //! Shared between the keyboard-hook thread (bindings) and the main thread (the rest).
 
 use std::fs;
@@ -24,7 +24,7 @@ static CURRENT: RwLock<Config> = RwLock::new(Config {
 pub fn path() -> PathBuf {
     let app_data = std::env::var_os("APPDATA").unwrap_or_default();
     PathBuf::from(app_data)
-        .join("win-tile")
+        .join("WinTrellis")
         .join("hotkeys.toml")
 }
 
@@ -37,8 +37,8 @@ pub fn load() {
         let created = fs::create_dir_all(path.parent().unwrap_or(&path))
             .and_then(|()| fs::write(&path, config::DEFAULT));
         match created {
-            Ok(()) => println!("created {}", path.display()),
-            Err(err) => eprintln!("couldn't create {}: {err}", path.display()),
+            Ok(()) => log!("created {}", path.display()),
+            Err(err) => log!("couldn't create {}: {err}", path.display()),
         }
     }
     let loaded = fs::read_to_string(&path)
@@ -47,17 +47,17 @@ pub fn load() {
     match loaded {
         Ok(new) => {
             *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = new;
-            println!("loaded {}", path.display());
+            log!("loaded {}", path.display());
         }
         Err(errors) => {
-            eprintln!("problems in {}:\n{errors}", path.display());
+            log!("problems in {}:\n{errors}", path.display());
             if read().bindings.is_empty() {
                 // Nothing loaded yet: fall back to the built-in defaults.
                 let defaults = config::parse(config::DEFAULT).expect("defaults are valid");
                 *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = defaults;
-                eprintln!("using the default settings");
+                log!("using the default settings");
             } else {
-                eprintln!("keeping the previous settings");
+                log!("keeping the previous settings");
             }
         }
     }

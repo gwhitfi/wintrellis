@@ -38,7 +38,7 @@ pub fn create() -> windows::core::Result<()> {
     let class = WNDCLASSW {
         lpfnWndProc: Some(on_message),
         hInstance: instance.into(),
-        lpszClassName: w!("win-tile-focus-border"),
+        lpszClassName: w!("WinTrellis-focus-border"),
         ..Default::default()
     };
     let hwnd = unsafe {
@@ -48,7 +48,7 @@ pub fn create() -> windows::core::Result<()> {
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class.lpszClassName,
-            w!("win-tile border"),
+            w!("WinTrellis border"),
             WS_POPUP,
             0,
             0,

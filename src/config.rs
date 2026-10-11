@@ -7,7 +7,7 @@ use serde::Deserialize;
 
 use crate::keyboard::Action;
 
-/// Written to disk the first time win-tile runs, and used if the file can't be read.
+/// Written to disk the first time WinTrellis runs, and used if the file can't be read.
 pub const DEFAULT: &str = include_str!("default_hotkeys.toml");
 
 #[derive(Debug, PartialEq)]

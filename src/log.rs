@@ -1,4 +1,4 @@
-//! Log file at `%APPDATA%\win-tile\win-tile.log`. Once win-tile runs without a console,
+//! Log file at `%APPDATA%\WinTrellis\wintrellis.log`. Once WinTrellis runs without a console,
 //! this is where status messages and settings errors go.
 
 use std::fmt;
@@ -20,15 +20,15 @@ macro_rules! log {
 }
 
 pub fn path() -> PathBuf {
-    settings::path().with_file_name("win-tile.log")
+    settings::path().with_file_name("wintrellis.log")
 }
 
 /// Starts a fresh log for this run. The previous run's log is kept as
-/// `win-tile.previous.log`, so after a crash you can still read what happened.
+/// `wintrellis.previous.log`, so after a crash you can still read what happened.
 pub fn init() {
     let path = path();
     let _ = fs::create_dir_all(path.parent().unwrap_or(&path));
-    let _ = fs::rename(&path, path.with_file_name("win-tile.previous.log"));
+    let _ = fs::rename(&path, path.with_file_name("wintrellis.previous.log"));
     match File::create(&path) {
         Ok(file) => *FILE.lock().unwrap_or_else(|e| e.into_inner()) = Some(file),
         Err(err) => eprintln!("couldn't create {}: {err}", path.display()),

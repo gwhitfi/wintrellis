@@ -12,7 +12,7 @@ pub fn focus(dir: Direction) {
     if let Some(target) = neighbor_window(current, dir, tracker::managed())
         && !unsafe { SetForegroundWindow(target) }.as_bool()
     {
-        eprintln!("Windows refused to focus {target:?}");
+        log!("Windows refused to focus {target:?}");
     }
 }
 

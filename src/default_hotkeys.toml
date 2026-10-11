@@ -1,4 +1,4 @@
-# win-tile settings. Every hotkey uses the Win key (SUPER); add "shift+" for Shift too.
+# WinTrellis settings. Every hotkey uses the Win key (SUPER); add "shift+" for Shift too.
 #
 # Keys: a-z, 0-9, f1-f12, enter, space, escape, tab, backspace, delete,
 #       left, right, up, down, home, end, pageup, pagedown
@@ -46,7 +46,7 @@ terminal = "wt.exe"
 gap = 8
 # Focused window's border, as #RRGGBB.
 border_color = "#F97316"
-# "overlay": drawn by win-tile, works on every app, `border_width` pixels thick.
+# "overlay": drawn by WinTrellis, works on every app, `border_width` pixels thick.
 # "native": recolors Windows' own 1px border; some apps (Windows Terminal, Discord) ignore it.
 border_style = "overlay"
 border_width = 3

@@ -99,7 +99,7 @@ pub fn switch_workspace(n: u8) {
     for &hwnd in &showing {
         hidden::show(hwnd);
     }
-    println!("workspace {n} ({} windows)", showing.len());
+    log!("workspace {n} ({} windows)", showing.len());
     // An empty workspace focuses the desktop, so focus doesn't jump to another monitor.
     let target = showing
         .first()
@@ -127,7 +127,7 @@ pub fn move_to_workspace(n: u8) {
         managed.push(entry);
     });
     hidden::hide(hwnd);
-    println!("moved {hwnd:?} to workspace {n}");
+    log!("moved {hwnd:?} to workspace {n}");
     let next = managed()
         .into_iter()
         .find(|&h| tiler::monitor_of(h) == monitor)
@@ -145,7 +145,7 @@ pub fn display_changed() {
             e.workspace = active_workspace(tiler::monitor_of(e.hwnd));
         }
     });
-    println!("display changed, retiling");
+    log!("display changed, retiling");
     request_retile();
 }
 
@@ -361,7 +361,7 @@ fn add(hwnd: HWND) {
                 floating: false,
             });
             style::apply(hwnd);
-            println!(
+            log!(
                 "+ {hwnd:?} {}  ({} managed)",
                 window::title(hwnd),
                 managed.len()
@@ -376,7 +376,7 @@ fn remove(hwnd: HWND) {
         if let Some(index) = managed.iter().position(|e| e.hwnd == hwnd) {
             managed.remove(index);
             style::release(hwnd);
-            println!("- {hwnd:?}  ({} managed)", managed.len());
+            log!("- {hwnd:?}  ({} managed)", managed.len());
             request_retile();
         }
     });
