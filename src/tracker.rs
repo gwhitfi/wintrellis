@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::layout::{self, Direction, Splits};
-use crate::{border, hidden, style, tiler, window};
+use crate::{bar, border, hidden, style, tiler, window};
 
 /// Posted to the message loop when the managed list changed and windows need moving.
 pub const WM_RETILE: u32 = WM_APP + 2;
@@ -72,6 +72,7 @@ pub fn retile() {
         float_too_big(hwnd);
     }
     border::reposition();
+    bar::refresh();
 }
 
 /// A window that can't shrink to fit its slot (it has a minimum size) floats instead,
@@ -244,6 +245,28 @@ fn position(hwnd: HWND) -> Option<usize> {
     MANAGED.with_borrow(|managed| managed.iter().position(|e| e.hwnd == hwnd))
 }
 
+/// How many workspaces each monitor has (hotkeys 1–5).
+pub const WORKSPACES: usize = 5;
+
+/// What the workspace bar shows for `monitor`: the workspace it's showing, and for each
+/// workspace (index 0 = workspace 1) whether any managed window belongs to it there.
+/// Hidden windows still count: Windows keeps their position, so their monitor is known.
+pub fn workspace_summary(monitor: HMONITOR) -> (u8, [bool; WORKSPACES]) {
+    let mut occupied = [false; WORKSPACES];
+    MANAGED.with_borrow(|managed| {
+        for e in managed {
+            if tiler::monitor_of(e.hwnd) == monitor
+                && let Some(slot) = usize::from(e.workspace)
+                    .checked_sub(1)
+                    .and_then(|i| occupied.get_mut(i))
+            {
+                *slot = true;
+            }
+        }
+    });
+    (active_workspace(monitor), occupied)
+}
+
 fn active_workspace(monitor: HMONITOR) -> u8 {
     ACTIVE.with_borrow(|active| {
         active
@@ -253,12 +276,19 @@ fn active_workspace(monitor: HMONITOR) -> u8 {
     })
 }
 
-/// Shows workspace `n` on the focused monitor: hides that monitor's current windows,
-/// shows the ones belonging to `n`, and focuses the first of them.
+/// Shows workspace `n` on the focused monitor (see `switch_workspace_on`).
 pub fn switch_workspace(n: u8) {
     let monitor = FOCUSED_MONITOR
         .get()
         .unwrap_or_else(|| tiler::monitor_of(unsafe { GetForegroundWindow() }));
+    switch_workspace_on(monitor, n);
+}
+
+/// Shows workspace `n` on `monitor`: hides that monitor's current windows, shows the
+/// ones belonging to `n`, and focuses the first of them. Workspace hotkeys act on
+/// `monitor` from now on.
+pub fn switch_workspace_on(monitor: HMONITOR, n: u8) {
+    FOCUSED_MONITOR.set(Some(monitor));
     let current = active_workspace(monitor);
     if n == current {
         return;

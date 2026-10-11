@@ -229,6 +229,62 @@ pub fn match_slots(slots: &[Rect], windows: &[Rect]) -> Vec<usize> {
     order
 }
 
+/// The workspace bar's bubbles: `count` boxes `w` × `h` pixels in a row, with `space`
+/// pixels around each one, relative to the bar's top-left corner.
+pub fn bar_bubbles(count: usize, w: i32, h: i32, space: i32) -> Vec<Rect> {
+    (0..count as i32)
+        .map(|i| Rect {
+            x: space + i * (w + space),
+            y: space,
+            w,
+            h,
+        })
+        .collect()
+}
+
+/// The workspace bar's (width, height): just big enough for `bar_bubbles` with the
+/// same arguments, keeping `space` around the outside too.
+pub fn bar_size(count: usize, w: i32, h: i32, space: i32) -> (i32, i32) {
+    let count = count as i32;
+    (count * w + (count + 1) * space, h + 2 * space)
+}
+
+/// Which of `rects` the point (`x`, `y`) is in, if any (e.g. which bubble was clicked).
+/// Left and top edges count as inside, right and bottom edges don't.
+pub fn rect_at(rects: &[Rect], x: i32, y: i32) -> Option<usize> {
+    rects
+        .iter()
+        .position(|r| r.x <= x && x < r.x + r.w && r.y <= y && y < r.y + r.h)
+}
+
+/// How tall the band at the top of a monitor that the workspace bar keeps is, so that
+/// windows end up `bar_gap` pixels below a bar `margin` + `height` from the top. The
+/// layout already leaves `gap` at the band's edge, so only the difference is added; the
+/// band can't go below 0 (then windows are `gap` from the top, as without a bar).
+pub fn bar_band(margin: i32, height: i32, bar_gap: i32, gap: i32) -> i32 {
+    (margin + height + bar_gap - gap).max(0)
+}
+
+/// `area` without its top `height` pixels, e.g. the band the workspace bar keeps.
+pub fn without_top(area: Rect, height: i32) -> Rect {
+    Rect {
+        y: area.y + height,
+        h: area.h - height,
+        ..area
+    }
+}
+
+/// A `w` × `h` rectangle centered left to right in `area`, `margin` pixels below its
+/// top edge. Where the workspace bar and the strip that reveals it go.
+pub fn top_center(area: Rect, w: i32, h: i32, margin: i32) -> Rect {
+    Rect {
+        x: area.x + (area.w - w) / 2,
+        y: area.y + margin,
+        w,
+        h,
+    }
+}
+
 fn overlap_area(a: Rect, b: Rect) -> i64 {
     shared(a.x, a.w, b.x, b.w) as i64 * shared(a.y, a.h, b.y, b.h) as i64
 }
@@ -624,5 +680,71 @@ mod tests {
             match_slots(&slots, &[elsewhere, slots[0], elsewhere]),
             vec![1, 0, 2]
         );
+    }
+
+    #[test]
+    fn bar_bubbles_sit_in_a_row_inside_the_bar() {
+        let (bubble_w, bubble_h, space) = (30, 14, 6);
+        let bubbles = bar_bubbles(5, bubble_w, bubble_h, space);
+        let (w, h) = bar_size(5, bubble_w, bubble_h, space);
+        assert_eq!(bubbles.len(), 5);
+        for pair in bubbles.windows(2) {
+            // Same row, evenly spaced, not touching.
+            assert_eq!(pair[1].y, pair[0].y);
+            assert_eq!(pair[1].x - (pair[0].x + pair[0].w), space);
+        }
+        // `space` left over on every side of the row.
+        let (first, last) = (bubbles[0], bubbles[4]);
+        assert_eq!((first.x, first.y), (space, space));
+        assert_eq!(w - (last.x + last.w), space);
+        assert_eq!(h - (last.y + last.h), space);
+    }
+
+    #[test]
+    fn rect_at_finds_the_bubble_under_a_point() {
+        let bubbles = bar_bubbles(5, 30, 14, 6);
+        // Inside the second bubble, including its top-left corner.
+        assert_eq!(rect_at(&bubbles, 50, 10), Some(1));
+        assert_eq!(rect_at(&bubbles, bubbles[1].x, bubbles[1].y), Some(1));
+        // Its right edge is already the gap.
+        assert_eq!(rect_at(&bubbles, bubbles[1].x + 30, 10), None);
+        // The space around the bubbles hits nothing.
+        assert_eq!(rect_at(&bubbles, 2, 2), None);
+        assert_eq!(rect_at(&bubbles, 50, 25), None);
+    }
+
+    #[test]
+    fn windows_end_up_bar_gap_below_the_bar() {
+        let (margin, height, gap) = (6, 28, 8);
+        for bar_gap in [0, 3, 8, 20] {
+            let band = bar_band(margin, height, bar_gap, gap);
+            // The layout puts the first window `gap` below the band.
+            let first_window_top = AREA.y + band + gap;
+            let bar_bottom = AREA.y + margin + height;
+            assert_eq!(first_window_top - bar_bottom, bar_gap, "bar_gap {bar_gap}");
+        }
+        // A gap bigger than the whole bar can't push the band above the screen.
+        assert_eq!(bar_band(0, 10, 0, 50), 0);
+    }
+
+    #[test]
+    fn without_top_takes_a_band_off_the_top_only() {
+        let rest = without_top(AREA, 40);
+        assert_eq!((rest.x, rest.w), (AREA.x, AREA.w));
+        assert_eq!(rest.y, AREA.y + 40);
+        // The bottom edge stays where it was.
+        assert_eq!(rest.y + rest.h, AREA.y + AREA.h);
+        assert_eq!(without_top(AREA, 0), AREA);
+    }
+
+    #[test]
+    fn top_center_is_centered_below_the_top_edge() {
+        let r = top_center(AREA, 140, 30, 4);
+        assert_eq!(r.y, AREA.y + 4);
+        assert_eq!((r.w, r.h), (140, 30));
+        // Odd leftover width: off by at most one pixel.
+        let left = r.x - AREA.x;
+        let right = (AREA.x + AREA.w) - (r.x + r.w);
+        assert!((left - right).abs() <= 1, "{left} vs {right}");
     }
 }

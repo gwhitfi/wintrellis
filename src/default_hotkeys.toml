@@ -61,6 +61,10 @@ border_style = "overlay" # "overlay" drawn by WinTrellis, works with every app. 
 border_width = 1
 # border_radius = 12 # Overlay border corner radius in pixels, 0 = square. Comment out to match "corners" below.
 corners = "default" # square, small, round, or default (windows default)
+workspace_bar = true # Bubbles for workspaces 1-5 at the top center of each monitor (click to switch). Tiled windows start below it
+bar_margin = 6 # Pixels from the top of the screen to the bar (scaled with the display)
+bar_padding = 6 # Pixels around and between the bubbles inside the bar (scaled with the display)
+# bar_gap = 8 # Pixels between the bar and the windows below it, like "gap". Comment out to use "gap"
 
 [transparency] # Add transparency to unfocused windows (off by default)
 #apps = ["discord.exe", "steam.exe"] # Any apps you want transparency

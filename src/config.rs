@@ -32,6 +32,14 @@ pub struct Config {
     pub unfocused_alpha: u8,
     /// Apps in the launcher menu, in menu order.
     pub launcher: Vec<Favorite>,
+    /// Show the workspace bar at the top center of each monitor.
+    pub workspace_bar: bool,
+    /// Pixels (at 100% scaling) from the top of the screen to the bar.
+    pub bar_margin: i32,
+    /// Pixels (at 100% scaling) around and between the bar's bubbles.
+    pub bar_padding: i32,
+    /// Pixels between the bar and the windows below it (like `gap`, not scaled).
+    pub bar_gap: i32,
 }
 
 /// One `[[launcher]]` entry: an app in the launcher, optionally with its own hotkey.
@@ -92,6 +100,10 @@ struct RawSettings {
     border_width: Option<i32>,
     border_radius: Option<i32>,
     corners: Option<String>,
+    workspace_bar: Option<bool>,
+    bar_margin: Option<i32>,
+    bar_padding: Option<i32>,
+    bar_gap: Option<i32>,
 }
 
 #[derive(Default, Deserialize)]
@@ -147,6 +159,19 @@ pub fn parse(text: &str) -> Result<Config, String> {
     let gap = raw.settings.gap.unwrap_or(8);
     if !(0..=100).contains(&gap) {
         errors.push(format!("gap must be between 0 and 100, got {gap}"));
+    }
+    // Missing bar_gap: the same as gap, so the bar sits like a screen edge.
+    let bar_margin = raw.settings.bar_margin.unwrap_or(6);
+    let bar_padding = raw.settings.bar_padding.unwrap_or(6);
+    let bar_gap = raw.settings.bar_gap.unwrap_or(gap);
+    for (name, value) in [
+        ("bar_margin", bar_margin),
+        ("bar_padding", bar_padding),
+        ("bar_gap", bar_gap),
+    ] {
+        if !(0..=100).contains(&value) {
+            errors.push(format!("{name} must be between 0 and 100, got {value}"));
+        }
     }
     let color = raw.settings.border_color.as_deref().unwrap_or("#F97316");
     let border_color = parse_color(color).unwrap_or_else(|e| {
@@ -252,6 +277,10 @@ pub fn parse(text: &str) -> Result<Config, String> {
         transparent_apps,
         unfocused_alpha,
         launcher,
+        workspace_bar: raw.settings.workspace_bar.unwrap_or(true),
+        bar_margin,
+        bar_padding,
+        bar_gap,
     })
 }
 
@@ -395,13 +424,17 @@ mod tests {
             Some(combo(0x0D, false, false))
         );
         assert_eq!(config.gap, 8);
-        assert_eq!(config.border_color, 0x0016_73F9); // #F97316
-        assert_eq!(config.corners, 1); // square
+        assert_eq!(config.border_color, 0x00FF_FFFF); // #FFFFFF
+        assert_eq!(config.corners, 0); // Windows' default
         assert!(config.overlay_border);
-        assert_eq!(config.border_width, 3);
+        assert_eq!(config.border_width, 1);
         assert_eq!(config.border_radius, None);
-        assert_eq!(config.transparent_apps, ["discord.exe", "steam.exe"]);
+        // Transparency is off by default (its lines are commented out).
+        assert!(config.transparent_apps.is_empty());
         assert_eq!(config.unfocused_alpha, 230); // 0.9
+        assert!(config.workspace_bar);
+        assert_eq!((config.bar_margin, config.bar_padding), (6, 6));
+        assert_eq!(config.bar_gap, config.gap); // commented out: follows gap
     }
 
     #[test]
@@ -482,6 +515,30 @@ mod tests {
         assert_eq!(radius("border_radius = 12"), Ok(Some(12)));
         assert!(radius("border_radius = -1").is_err());
         assert!(radius("border_radius = 99").is_err());
+    }
+
+    #[test]
+    fn workspace_bar_is_on_unless_turned_off() {
+        assert!(parse("").unwrap().workspace_bar);
+        assert!(
+            !parse("[settings]\nworkspace_bar = false")
+                .unwrap()
+                .workspace_bar
+        );
+        assert!(parse("[settings]\nworkspace_bar = \"no\"").is_err());
+    }
+
+    #[test]
+    fn bar_spacing_parses_with_bar_gap_following_gap() {
+        let defaults = parse("").unwrap();
+        assert_eq!((defaults.bar_margin, defaults.bar_padding), (6, 6));
+        assert_eq!(defaults.bar_gap, defaults.gap);
+        let set = parse("[settings]\ngap = 12\nbar_margin = 0\nbar_padding = 4").unwrap();
+        assert_eq!((set.bar_margin, set.bar_padding, set.bar_gap), (0, 4, 12));
+        assert_eq!(parse("[settings]\nbar_gap = 3").unwrap().bar_gap, 3);
+        for bad in ["bar_margin = -1", "bar_padding = 101", "bar_gap = -5"] {
+            assert!(parse(&format!("[settings]\n{bad}")).is_err(), "{bad}");
+        }
     }
 
     #[test]

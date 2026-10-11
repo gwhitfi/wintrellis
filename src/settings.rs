@@ -19,6 +19,10 @@ static CURRENT: RwLock<Config> = RwLock::new(Config {
     transparent_apps: Vec::new(),
     unfocused_alpha: 255,
     launcher: Vec::new(),
+    workspace_bar: true,
+    bar_margin: 6,
+    bar_padding: 6,
+    bar_gap: 8,
 });
 
 pub fn path() -> PathBuf {
@@ -117,4 +121,20 @@ pub fn unfocused_alpha() -> u8 {
 
 pub fn corners() -> i32 {
     read().corners
+}
+
+pub fn workspace_bar() -> bool {
+    read().workspace_bar
+}
+
+pub fn bar_margin() -> i32 {
+    read().bar_margin
+}
+
+pub fn bar_padding() -> i32 {
+    read().bar_padding
+}
+
+pub fn bar_gap() -> i32 {
+    read().bar_gap
 }

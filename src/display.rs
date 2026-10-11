@@ -14,7 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use crate::keyboard::WM_ACTION;
-use crate::{shutdown, tracker, tray};
+use crate::{bar, shutdown, tracker, tray};
 
 /// Creates the hidden listener window. It's never shown. Must be called on the
 /// message-loop thread, since that's where its messages are delivered.
@@ -54,6 +54,7 @@ unsafe extern "system" fn on_message(
     let work_area_changed = msg == WM_SETTINGCHANGE && wparam.0 as u32 == SPI_SETWORKAREA.0;
     if msg == WM_DISPLAYCHANGE || work_area_changed {
         tracker::display_changed();
+        bar::rebuild();
     }
     // For tray messages, lParam says what the mouse did on the icon.
     if msg == tray::WM_TRAY

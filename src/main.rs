@@ -6,7 +6,9 @@
 #[macro_use]
 mod log;
 mod autostart;
+mod bar;
 mod border;
+mod canvas;
 mod config;
 mod display;
 mod focus;
@@ -52,6 +54,10 @@ fn main() {
     }
     overlay::create().unwrap();
     launcher::create().unwrap();
+    // Nice to have: WinTrellis works without it.
+    if let Err(err) = bar::create() {
+        log!("couldn't create the workspace bar: {err}");
+    }
     let _events = tracker::start();
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();
@@ -116,6 +122,7 @@ fn run(action: Action) {
             settings::load();
             tracker::restyle_all();
             border::repaint();
+            bar::rebuild();
             tracker::retile();
         }
         Action::EditConfig => edit_config(),

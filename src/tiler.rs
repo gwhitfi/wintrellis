@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::layout::{self, Rect, Splits};
-use crate::{settings, window};
+use crate::{bar, settings, window};
 
 thread_local! {
     /// Overflow windows we've already centered. Each is centered once, when it first
@@ -35,7 +35,7 @@ pub fn retile(windows: &[HWND], splits: impl Fn(HMONITOR) -> Splits) -> Vec<HWND
     let mut tiled = Vec::new();
     let mut overflow = Vec::new();
     for (monitor, group) in group_by_monitor(windows) {
-        let Some(area) = work_area(monitor) else {
+        let Some(area) = tiling_area(monitor) else {
             continue;
         };
         let slots = layout::layout(area, group.len(), settings::gap(), splits(monitor));
@@ -73,7 +73,7 @@ pub fn fits(windows: &[HWND], splits: Splits) -> bool {
     let Some(&first) = windows.first() else {
         return true;
     };
-    let Some(area) = work_area(monitor_of(first)) else {
+    let Some(area) = tiling_area(monitor_of(first)) else {
         return true;
     };
     let slots = layout::layout(area, windows.len(), settings::gap(), splits);
@@ -92,7 +92,7 @@ pub fn fits(windows: &[HWND], splits: Splits) -> bool {
 pub fn order_by_position(windows: &[HWND]) -> Vec<HWND> {
     let mut ordered = Vec::with_capacity(windows.len());
     for (monitor, group) in group_by_monitor(windows) {
-        let Some(area) = work_area(monitor) else {
+        let Some(area) = tiling_area(monitor) else {
             ordered.extend(group);
             continue;
         };
@@ -159,7 +159,7 @@ fn move_windows(moves: &[(HWND, Rect)]) {
 
 /// Centers a window on its monitor (keeping its size), e.g. when it starts floating.
 pub fn center(hwnd: HWND) {
-    if let Some(area) = work_area(monitor_of(hwnd))
+    if let Some(area) = tiling_area(monitor_of(hwnd))
         && let Some(slot) = centered_slot(hwnd, area)
     {
         move_windows(&[(hwnd, outer_rect(hwnd, slot))]);
@@ -194,6 +194,15 @@ fn group_by_monitor(windows: &[HWND]) -> Vec<(HMONITOR, Vec<HWND>)> {
         }
     }
     groups
+}
+
+/// Where WinTrellis places windows on `monitor`: the work area minus the band the
+/// workspace bar keeps at the top.
+pub fn tiling_area(monitor: HMONITOR) -> Option<Rect> {
+    Some(layout::without_top(
+        work_area(monitor)?,
+        bar::reserved_height(monitor),
+    ))
 }
 
 /// The monitor's area minus the taskbar.
