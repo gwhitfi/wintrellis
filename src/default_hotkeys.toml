@@ -3,14 +3,13 @@
 # Keys: a-z, 0-9, f1-f12, enter, space, escape, tab, backspace, delete,
 #       left, right, up, down, home, end, pageup, pagedown
 #
-# Actions: launch_terminal, open_launcher (menu of the [[launcher]] apps below),
+# Actions: open_launcher (search the [[launcher]] apps below),
 #          close_window, toggle_floating, quit,
 #          reload_config, edit_config (opens this file in Notepad),
 #          focus_left/right/up/down, swap_left/right/up/down, promote,
 #          workspace_1 .. workspace_5, move_to_workspace_1 .. move_to_workspace_5
 
 [hotkeys]
-"enter" = "launch_terminal"
 "t" = "open_launcher"
 "shift+enter" = "promote"
 "shift+q" = "close_window"
@@ -42,8 +41,6 @@
 "shift+5" = "move_to_workspace_5"
 
 [settings]
-# Program Win+Enter opens.
-terminal = "wt.exe"
 # Pixels between tiled windows and around the screen edge.
 gap = 8
 # Focused window's border, as #RRGGBB.
@@ -65,9 +62,15 @@ apps = ["discord.exe", "steam.exe"]
 # How solid they are while unfocused: 0.1 (barely visible) to 1.0 (solid).
 opacity = 0.9
 
-# Apps in the open_launcher menu, in order; press 1-9 (then 0) to pick one.
+# Apps in the launcher (Win+T: type to search, Enter to open), in this order.
 # `open` is anything the Run dialog (Win+R) accepts: a program, a full path, or a link.
-# Remove the # in front of these lines to use them; add more [[launcher]] blocks the same way.
+# `key` (optional) also gives the app its own hotkey: Win + key, e.g. "b" or "shift+b".
+[[launcher]]
+name = "Terminal"
+open = "wt.exe"
+key = "enter"
+
+# More examples: remove the # in front of these lines to use them.
 # [[launcher]]
 # name = "Firefox"
 # open = "firefox.exe"

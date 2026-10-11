@@ -6,11 +6,10 @@ use std::path::PathBuf;
 use std::sync::{RwLock, RwLockReadGuard};
 
 use crate::config::{self, Config, Favorite};
-use crate::keyboard::Action;
+use crate::keyboard::Command;
 
 static CURRENT: RwLock<Config> = RwLock::new(Config {
     bindings: Vec::new(),
-    terminal: String::new(),
     gap: 8,
     border_color: 0,
     overlay_border: true,
@@ -68,18 +67,23 @@ fn read() -> RwLockReadGuard<'static, Config> {
     CURRENT.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// The action bound to SUPER + `key` (+ Shift). Called from the keyboard hook, so it
-/// only takes a brief read lock; writes happen only when settings are (re)loaded.
-pub fn action_for(key: u16, shift: bool) -> Option<Action> {
-    read()
+/// What SUPER + `key` (+ Shift) does: a `[hotkeys]` action, or opening a launcher app
+/// that has this `key`. Called from the keyboard hook, so it only takes a brief read
+/// lock; writes happen only when settings are (re)loaded.
+pub fn command_for(key: u16, shift: bool) -> Option<Command> {
+    let config = read();
+    if let Some(binding) = config
         .bindings
         .iter()
         .find(|b| b.key == key && b.shift == shift)
-        .map(|b| b.action)
-}
-
-pub fn terminal() -> String {
-    read().terminal.clone()
+    {
+        return Some(Command::Action(binding.action));
+    }
+    config
+        .launcher
+        .iter()
+        .position(|app| app.key == Some((key, shift)))
+        .map(Command::Launch)
 }
 
 /// A copy, so the settings lock isn't held while the launcher menu is open.

@@ -13,7 +13,6 @@ pub const DEFAULT: &str = include_str!("default_hotkeys.toml");
 #[derive(Debug, PartialEq)]
 pub struct Config {
     pub bindings: Vec<Binding>,
-    pub terminal: String,
     pub gap: i32,
     /// As Windows wants it: 0x00BBGGRR.
     pub border_color: u32,
@@ -35,15 +34,24 @@ pub struct Config {
     pub launcher: Vec<Favorite>,
 }
 
-/// One `[[launcher]]` entry: an app in the launcher menu.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// One `[[launcher]]` entry: an app in the launcher, optionally with its own hotkey.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Favorite {
-    /// Shown in the menu.
+    /// Shown in the launcher.
     pub name: String,
     /// What to open: a program ("firefox.exe"), a full path, a link like
     /// "steam://open/main", or "shell:AppsFolder\..." for Store apps.
     pub open: String,
+    /// SUPER + this key opens it directly: (virtual-key code, with Shift).
+    pub key: Option<(u16, bool)>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFavorite {
+    name: String,
+    open: String,
+    key: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,7 +72,7 @@ struct RawConfig {
     #[serde(default)]
     transparency: RawTransparency,
     #[serde(default)]
-    launcher: Vec<Favorite>,
+    launcher: Vec<RawFavorite>,
 }
 
 #[derive(Default, Deserialize)]
@@ -102,7 +110,13 @@ pub fn parse(text: &str) -> Result<Config, String> {
             }
         };
         let Some(action) = action_from_name(action_name) else {
-            errors.push(format!("\"{combo}\": unknown action \"{action_name}\""));
+            errors.push(match action_name.trim() {
+                "launch_terminal" => format!(
+                    "\"{combo}\": launch_terminal is gone; add a [[launcher]] entry for your \
+                     terminal with key = \"{combo}\" instead"
+                ),
+                _ => format!("\"{combo}\": unknown action \"{action_name}\""),
+            });
             continue;
         };
         if bindings.iter().any(|b| b.key == key && b.shift == shift) {
@@ -110,6 +124,14 @@ pub fn parse(text: &str) -> Result<Config, String> {
             continue;
         }
         bindings.push(Binding { key, shift, action });
+    }
+
+    // Kept only to explain the change to anyone whose file still has it.
+    if let Some(terminal) = &raw.settings.terminal {
+        errors.push(format!(
+            "the terminal setting is gone; add a [[launcher]] entry with open = \"{terminal}\" \
+             and key = \"enter\" instead"
+        ));
     }
 
     let gap = raw.settings.gap.unwrap_or(8);
@@ -177,10 +199,33 @@ pub fn parse(text: &str) -> Result<Config, String> {
         .map(|app| app.trim().to_ascii_lowercase())
         .collect();
 
-    for (i, favorite) in raw.launcher.iter().enumerate() {
-        if favorite.name.trim().is_empty() || favorite.open.trim().is_empty() {
+    let mut launcher: Vec<Favorite> = Vec::new();
+    for (i, entry) in raw.launcher.into_iter().enumerate() {
+        if entry.name.trim().is_empty() || entry.open.trim().is_empty() {
             errors.push(format!("launcher entry {} needs a name and open", i + 1));
+            continue;
         }
+        let key = match entry.key.as_deref().map(parse_combo).transpose() {
+            Ok(key) => key,
+            Err(e) => {
+                errors.push(format!("launcher entry \"{}\": {e}", entry.name));
+                None
+            }
+        };
+        // One key, one job: it can't also be a [hotkeys] binding or another app's key.
+        if let Some((code, shift)) = key {
+            let in_hotkeys = bindings.iter().any(|b| b.key == code && b.shift == shift);
+            let in_launcher = launcher.iter().any(|f| f.key == key);
+            if in_hotkeys || in_launcher {
+                let combo = entry.key.as_deref().unwrap_or_default();
+                errors.push(format!("\"{combo}\" is bound more than once"));
+            }
+        }
+        launcher.push(Favorite {
+            name: entry.name,
+            open: entry.open,
+            key,
+        });
     }
 
     if !errors.is_empty() {
@@ -188,7 +233,6 @@ pub fn parse(text: &str) -> Result<Config, String> {
     }
     Ok(Config {
         bindings,
-        terminal: raw.settings.terminal.unwrap_or_else(|| "wt.exe".into()),
         gap,
         border_color,
         overlay_border,
@@ -197,7 +241,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         corners,
         transparent_apps,
         unfocused_alpha,
-        launcher: raw.launcher,
+        launcher,
     })
 }
 
@@ -255,8 +299,7 @@ fn parse_color(text: &str) -> Result<u32, String> {
     Ok((b << 16) | (g << 8) | r)
 }
 
-const ACTION_NAMES: [(&str, Action); 26] = [
-    ("launch_terminal", Action::LaunchTerminal),
+const ACTION_NAMES: [(&str, Action); 25] = [
     ("open_launcher", Action::OpenLauncher),
     ("focus_left", Action::FocusLeft),
     ("focus_right", Action::FocusRight),
@@ -315,7 +358,9 @@ mod tests {
                 "{action:?} is not bound by default"
             );
         }
-        assert_eq!(config.terminal, "wt.exe");
+        // Win+Enter opens Windows Terminal, as a launcher app.
+        let terminal = config.launcher.iter().find(|app| app.open == "wt.exe");
+        assert_eq!(terminal.and_then(|app| app.key), Some((0x0D, false)));
         assert_eq!(config.gap, 8);
         assert_eq!(config.border_color, 0x0016_73F9); // #F97316
         assert_eq!(config.corners, 1); // square
@@ -360,6 +405,37 @@ mod tests {
         assert!(parse("[[launcher]]\nname = \"Firefox\"").is_err()); // no open
         assert!(parse("[[launcher]]\nname = \" \"\nopen = \"x.exe\"").is_err());
         assert!(parse("[[launcher]]\nname = \"A\"\nopen = \"a.exe\"\nargs = \"\"").is_err());
+    }
+
+    #[test]
+    fn launcher_keys_parse() {
+        let app =
+            |key: &str| format!("[[launcher]]\nname = \"A\"\nopen = \"a.exe\"\nkey = \"{key}\"\n");
+        let key = |text: &str| parse(text).map(|c| c.launcher[0].key);
+        assert_eq!(key(&app("b")), Ok(Some((b'B' as u16, false))));
+        assert_eq!(key(&app("Shift+S")), Ok(Some((b'S' as u16, true))));
+        assert_eq!(
+            key("[[launcher]]\nname = \"A\"\nopen = \"a.exe\""),
+            Ok(None)
+        );
+        assert!(parse(&app("hyper+b")).is_err());
+    }
+
+    #[test]
+    fn launcher_key_clashes_are_errors() {
+        let app =
+            |key: &str| format!("[[launcher]]\nname = \"A\"\nopen = \"a.exe\"\nkey = \"{key}\"\n");
+        // Same key as a [hotkeys] binding.
+        let with_hotkey = format!("[hotkeys]\n\"b\" = \"quit\"\n{}", app("b"));
+        assert!(
+            parse(&with_hotkey)
+                .unwrap_err()
+                .contains("bound more than once")
+        );
+        // Same key on two apps.
+        assert!(parse(&format!("{}{}", app("b"), app("b"))).is_err());
+        // Shift makes it a different key.
+        assert!(parse(&format!("{}{}", app("b"), app("shift+b"))).is_ok());
     }
 
     #[test]
@@ -433,10 +509,17 @@ mod tests {
     }
 
     #[test]
+    fn old_terminal_settings_explain_the_change() {
+        let errors = parse("[hotkeys]\n\"enter\" = \"launch_terminal\"").unwrap_err();
+        assert!(errors.contains("add a [[launcher]] entry"), "{errors}");
+        let errors = parse("[settings]\nterminal = \"wt.exe\"").unwrap_err();
+        assert!(errors.contains("open = \"wt.exe\""), "{errors}");
+    }
+
+    #[test]
     fn missing_sections_use_defaults() {
         let config = parse("").unwrap();
         assert!(config.bindings.is_empty());
-        assert_eq!(config.terminal, "wt.exe");
         assert_eq!(config.gap, 8);
     }
 

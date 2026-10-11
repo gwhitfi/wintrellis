@@ -8,7 +8,6 @@ mod log;
 mod autostart;
 mod border;
 mod config;
-mod dark_menus;
 mod display;
 mod focus;
 mod hidden;
@@ -37,7 +36,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, MSG, PostQuitMessage, TranslateMessage,
 };
 
-use keyboard::{Action, WM_ACTION};
+use keyboard::{Action, WM_ACTION, WM_LAUNCH};
 use layout::Direction;
 
 fn main() {
@@ -57,10 +56,9 @@ fn main() {
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();
     let display_listener = display::create_listener().unwrap();
-    dark_menus::enable();
     tray::add(display_listener);
     snap::disable();
-    log!("WinTrellis running. SUPER+Enter opens a terminal. SUPER+Esc or Ctrl+C quits.");
+    log!("WinTrellis running. SUPER+T opens the launcher. SUPER+Esc or Ctrl+C quits.");
 
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
@@ -70,6 +68,7 @@ fn main() {
                     run(action);
                 }
             }
+            WM_LAUNCH => launcher::launch(msg.wParam.0),
             tracker::WM_RETILE => tracker::retile(),
             // Messages addressed to a window (display listener, launcher) go to its
             // handler. TranslateMessage turns key presses into WM_CHAR (typed text).
@@ -86,7 +85,6 @@ fn main() {
 
 fn run(action: Action) {
     match action {
-        Action::LaunchTerminal => launch_terminal(),
         Action::OpenLauncher => launcher::show(),
         Action::FocusLeft => focus::focus(Direction::Left),
         Action::FocusRight => focus::focus(Direction::Right),
@@ -127,12 +125,5 @@ fn edit_config() {
     let path = settings::path();
     if let Err(err) = Command::new("notepad.exe").arg(&path).spawn() {
         log!("failed to open {} in Notepad: {err}", path.display());
-    }
-}
-
-fn launch_terminal() {
-    let terminal = settings::terminal();
-    if let Err(err) = Command::new(&terminal).spawn() {
-        log!("failed to launch {terminal}: {err}");
     }
 }

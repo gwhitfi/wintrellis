@@ -309,6 +309,13 @@ fn paint(hwnd: HWND) {
     }
 }
 
+/// Opens launcher app number `index` directly (its own hotkey), without the window.
+pub fn launch(index: usize) {
+    if let Some(app) = settings::launcher().get(index) {
+        open(&app.open);
+    }
+}
+
 /// Opens it the way the Run dialog (Win+R) does, so programs, paths, links like
 /// `steam://` and `shell:AppsFolder\...` Store apps all work.
 fn open(target: &str) {

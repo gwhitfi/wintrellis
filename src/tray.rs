@@ -1,11 +1,11 @@
 //! The notification-area (tray) icon: the visible sign that WinTrellis is running.
 //! It belongs to the hidden listener window from `display.rs`, which receives its
-//! mouse events as `WM_TRAY` messages.
+//! mouse events as `WM_TRAY` messages. Its right-click menu is dark.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use windows::Win32::Foundation::{HWND, POINT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
@@ -14,7 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     LR_DEFAULTCOLOR, LoadImageW, MF_CHECKED, MF_SEPARATOR, MF_STRING, SM_CXSMICON, SM_CYSMICON,
     SetForegroundWindow, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, WM_APP,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{PCSTR, PCWSTR, w};
 
 use crate::autostart;
 use crate::keyboard::Action;
@@ -25,8 +25,15 @@ pub const WM_TRAY: u32 = WM_APP + 3;
 /// The window the icon belongs to, so `remove` can find it.
 static OWNER: AtomicUsize = AtomicUsize::new(0);
 
+/// uxtheme.dll #135, `SetPreferredAppMode`. 2 = always dark.
+const SET_PREFERRED_APP_MODE: usize = 135;
+const FORCE_DARK: i32 = 2;
+/// uxtheme.dll #136, `FlushMenuThemes`: applies the mode to menus right away.
+const FLUSH_MENU_THEMES: usize = 136;
+
 /// Adds the icon to the tray. `owner` is the window that gets its `WM_TRAY` messages.
 pub fn add(owner: HWND) {
+    enable_dark_menus();
     OWNER.store(owner.0 as usize, Ordering::Relaxed);
     let mut data = base(owner);
     data.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
@@ -36,6 +43,29 @@ pub fn add(owner: HWND) {
     data.szTip[..tip.len()].copy_from_slice(&tip);
     if !unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool() {
         log!("couldn't add the tray icon");
+    }
+}
+
+/// Makes this process's popup menus dark. Windows has no public API for this: the
+/// undocumented uxtheme.dll functions below, looked up by number, are what Explorer,
+/// Notepad++ and many other apps use. If they're ever missing, the menu stays light.
+fn enable_dark_menus() {
+    unsafe {
+        let Ok(uxtheme) = LoadLibraryW(w!("uxtheme.dll")) else {
+            return;
+        };
+        // A number instead of a name in GetProcAddress means "the function with
+        // this ordinal".
+        let Some(set_mode) = GetProcAddress(uxtheme, PCSTR(SET_PREFERRED_APP_MODE as _)) else {
+            log!("dark menus aren't available on this Windows version");
+            return;
+        };
+        let set_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(set_mode);
+        set_mode(FORCE_DARK);
+        if let Some(flush) = GetProcAddress(uxtheme, PCSTR(FLUSH_MENU_THEMES as _)) {
+            let flush: unsafe extern "system" fn() = std::mem::transmute(flush);
+            flush();
+        }
     }
 }
 

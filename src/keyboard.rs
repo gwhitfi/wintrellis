@@ -18,13 +18,24 @@ use crate::settings;
 /// Slow work happens there, never in the hook.
 pub const WM_ACTION: u32 = WM_APP + 1;
 
+/// Posted by the hook to the main thread for a launcher app's own hotkey, with the
+/// app's index in the `[[launcher]]` list in `wParam`.
+pub const WM_LAUNCH: u32 = WM_APP + 4;
+
+/// What a hotkey does: one of WinTrellis's actions, or opening a launcher app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Command {
+    Action(Action),
+    /// Index into the `[[launcher]]` list.
+    Launch(usize),
+}
+
 /// The thread that runs actions (the main thread).
 static ACTION_THREAD: AtomicU32 = AtomicU32::new(0);
 
 /// Everything a hotkey can trigger.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
-    LaunchTerminal,
     OpenLauncher,
     FocusLeft,
     FocusRight,
@@ -54,8 +65,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order, so an action survives a round trip through `wParam`.
-    pub const ALL: [Action; 26] = [
-        Action::LaunchTerminal,
+    pub const ALL: [Action; 25] = [
         Action::OpenLauncher,
         Action::FocusLeft,
         Action::FocusRight,
@@ -146,13 +156,16 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             // Same for Shift: track it, pass it through.
             SHIFT_DOWN.store(key_down, Ordering::Relaxed);
         } else if SUPER_DOWN.load(Ordering::Relaxed)
-            && let Some(action) = settings::action_for(vk.0, SHIFT_DOWN.load(Ordering::Relaxed))
+            && let Some(command) = settings::command_for(vk.0, SHIFT_DOWN.load(Ordering::Relaxed))
         {
             if key_down && !is_repeat {
                 send_mask_key();
-                let wparam = WPARAM(action as usize);
+                let (message, index) = match command {
+                    Command::Action(action) => (WM_ACTION, action as usize),
+                    Command::Launch(app) => (WM_LAUNCH, app),
+                };
                 let thread = ACTION_THREAD.load(Ordering::Relaxed);
-                let _ = unsafe { PostThreadMessageW(thread, WM_ACTION, wparam, LPARAM(0)) };
+                let _ = unsafe { PostThreadMessageW(thread, message, WPARAM(index), LPARAM(0)) };
             }
             // Swallow both the press and the release so no app sees the key.
             return LRESULT(1);
