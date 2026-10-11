@@ -5,7 +5,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{RwLock, RwLockReadGuard};
 
-use crate::config::{self, Config, Favorite};
+use crate::config::{self, Combo, Config, Favorite};
 use crate::keyboard::Command;
 
 static CURRENT: RwLock<Config> = RwLock::new(Config {
@@ -67,22 +67,18 @@ fn read() -> RwLockReadGuard<'static, Config> {
     CURRENT.read().unwrap_or_else(|e| e.into_inner())
 }
 
-/// What SUPER + `key` (+ Shift) does: a `[hotkeys]` action, or opening a launcher app
+/// What the hotkey `combo` does: a `[hotkeys]` action, or opening a launcher app
 /// that has this `key`. Called from the keyboard hook, so it only takes a brief read
 /// lock; writes happen only when settings are (re)loaded.
-pub fn command_for(key: u16, shift: bool) -> Option<Command> {
+pub fn command_for(combo: Combo) -> Option<Command> {
     let config = read();
-    if let Some(binding) = config
-        .bindings
-        .iter()
-        .find(|b| b.key == key && b.shift == shift)
-    {
+    if let Some(binding) = config.bindings.iter().find(|b| b.combo == combo) {
         return Some(Command::Action(binding.action));
     }
     config
         .launcher
         .iter()
-        .position(|app| app.key == Some((key, shift)))
+        .position(|app| app.key == Some(combo))
         .map(Command::Launch)
 }
 

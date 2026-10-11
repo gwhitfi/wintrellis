@@ -5,13 +5,14 @@ use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_LSHIFT, VK_LWIN, VK_RSHIFT, VK_RWIN,
+    VIRTUAL_KEY, VK_LCONTROL, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RSHIFT, VK_RWIN,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
     PostThreadMessageW, SetWindowsHookExW, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
+use crate::config::Combo;
 use crate::settings;
 
 /// Posted by the hook to the main thread, with the `Action` index in `wParam`.
@@ -46,6 +47,11 @@ pub enum Action {
     SwapUp,
     SwapDown,
     Promote,
+    ResizeLeft,
+    ResizeRight,
+    ResizeUp,
+    ResizeDown,
+    ResetSizes,
     Workspace1,
     Workspace2,
     Workspace3,
@@ -65,7 +71,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in declaration order, so an action survives a round trip through `wParam`.
-    pub const ALL: [Action; 25] = [
+    pub const ALL: [Action; 30] = [
         Action::OpenLauncher,
         Action::FocusLeft,
         Action::FocusRight,
@@ -76,6 +82,11 @@ impl Action {
         Action::SwapUp,
         Action::SwapDown,
         Action::Promote,
+        Action::ResizeLeft,
+        Action::ResizeRight,
+        Action::ResizeUp,
+        Action::ResizeDown,
+        Action::ResetSizes,
         Action::Workspace1,
         Action::Workspace2,
         Action::Workspace3,
@@ -103,6 +114,9 @@ static SUPER_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// True while either Shift key is held down.
 static SHIFT_DOWN: AtomicBool = AtomicBool::new(false);
+
+/// True while either Ctrl key is held down.
+static CTRL_DOWN: AtomicBool = AtomicBool::new(false);
 
 /// The key currently held down (0 if none). A key-down for the same key again is
 /// Windows' auto-repeat, which we use to stop held hotkeys from firing repeatedly.
@@ -155,8 +169,15 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         } else if vk == VK_LSHIFT || vk == VK_RSHIFT {
             // Same for Shift: track it, pass it through.
             SHIFT_DOWN.store(key_down, Ordering::Relaxed);
+        } else if vk == VK_LCONTROL || vk == VK_RCONTROL {
+            // And Ctrl.
+            CTRL_DOWN.store(key_down, Ordering::Relaxed);
         } else if SUPER_DOWN.load(Ordering::Relaxed)
-            && let Some(command) = settings::command_for(vk.0, SHIFT_DOWN.load(Ordering::Relaxed))
+            && let Some(command) = settings::command_for(Combo {
+                key: vk.0,
+                shift: SHIFT_DOWN.load(Ordering::Relaxed),
+                ctrl: CTRL_DOWN.load(Ordering::Relaxed),
+            })
         {
             if key_down && !is_repeat {
                 send_mask_key();

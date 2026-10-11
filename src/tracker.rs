@@ -11,6 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP,
 };
 
+use crate::layout::{self, Direction, Splits};
 use crate::{border, hidden, style, tiler, window};
 
 /// Posted to the message loop when the managed list changed and windows need moving.
@@ -33,6 +34,9 @@ thread_local! {
     /// The workspace each monitor is showing. Monitors not listed show workspace 1.
     static ACTIVE: RefCell<Vec<(HMONITOR, u8)>> = const { RefCell::new(Vec::new()) };
 
+    /// Each workspace's dividing lines, once resized. Workspaces not listed are even.
+    static SPLITS: RefCell<Vec<((HMONITOR, u8), Splits)>> = const { RefCell::new(Vec::new()) };
+
     /// The monitor of the managed window that last had focus. Workspace hotkeys act on
     /// this monitor. Tracked ourselves because after switching to an empty workspace,
     /// Windows may hand focus to a window on another monitor.
@@ -48,7 +52,7 @@ thread_local! {
 /// Handles WM_RETILE: moves every managed window into its slot.
 pub fn retile() {
     RETILE_PENDING.set(false);
-    let too_big = tiler::retile(&tiled());
+    let too_big = tiler::retile(&tiled(), shown_splits);
     for hwnd in too_big {
         float_too_big(hwnd);
     }
@@ -69,6 +73,63 @@ fn float_too_big(hwnd: HWND) {
         window::title(hwnd)
     );
     tiler::center(hwnd);
+    request_retile();
+}
+
+/// The dividing lines of the workspace `monitor` is showing.
+fn shown_splits(monitor: HMONITOR) -> Splits {
+    let workspace = (monitor, active_workspace(monitor));
+    SPLITS.with_borrow(|all| {
+        all.iter()
+            .find(|&&(w, _)| w == workspace)
+            .map_or(Splits::EVEN, |&(_, splits)| splits)
+    })
+}
+
+fn set_shown_splits(monitor: HMONITOR, splits: Splits) {
+    let workspace = (monitor, active_workspace(monitor));
+    SPLITS.with_borrow_mut(|all| match all.iter_mut().find(|(w, _)| *w == workspace) {
+        Some((_, current)) => *current = splits,
+        None => all.push((workspace, splits)),
+    });
+}
+
+/// Moves a border of the focused tiled window a step in `dir` (see `layout::resize`),
+/// which resizes its neighbors too. Skipped if a window can't shrink that far (it has
+/// a minimum size), so resizing never knocks a window out of the layout.
+pub fn resize(dir: Direction) {
+    let hwnd = unsafe { GetForegroundWindow() };
+    let monitor = tiler::monitor_of(hwnd);
+    let here: Vec<HWND> = tiled()
+        .into_iter()
+        .filter(|&other| tiler::monitor_of(other) == monitor)
+        .collect();
+    // Not tiled (floating, unmanaged, or past the 6th window): nothing to resize.
+    let Some(slot) = here.iter().position(|&other| other == hwnd) else {
+        return;
+    };
+    let before = shown_splits(monitor);
+    let Some(after) = layout::resize(before, here.len(), slot, dir) else {
+        return;
+    };
+    // Check first, so a step that doesn't fit doesn't move anything at all.
+    if !tiler::fits(&here, after) {
+        return;
+    }
+    set_shown_splits(monitor, after);
+    // Some apps enforce a minimum size without reporting it: undo the step afterwards.
+    if !tiler::retile(&tiled(), shown_splits).is_empty() {
+        log!("can't resize further: a neighbor of {hwnd:?} can't shrink any more");
+        set_shown_splits(monitor, before);
+        tiler::retile(&tiled(), shown_splits);
+    }
+    border::reposition();
+}
+
+/// Puts every dividing line of the focused monitor's workspace back in the middle.
+pub fn reset_sizes() {
+    let monitor = tiler::monitor_of(unsafe { GetForegroundWindow() });
+    set_shown_splits(monitor, Splits::EVEN);
     request_retile();
 }
 

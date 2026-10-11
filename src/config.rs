@@ -42,8 +42,8 @@ pub struct Favorite {
     /// What to open: a program ("firefox.exe"), a full path, a link like
     /// "steam://open/main", or "shell:AppsFolder\..." for Store apps.
     pub open: String,
-    /// SUPER + this key opens it directly: (virtual-key code, with Shift).
-    pub key: Option<(u16, bool)>,
+    /// This hotkey opens it directly.
+    pub key: Option<Combo>,
 }
 
 #[derive(Deserialize)]
@@ -54,11 +54,18 @@ struct RawFavorite {
     key: Option<String>,
 }
 
+/// A hotkey: SUPER + `key`, with or without Shift and Ctrl.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Binding {
+pub struct Combo {
     /// Windows virtual-key code.
     pub key: u16,
     pub shift: bool,
+    pub ctrl: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Binding {
+    pub combo: Combo,
     pub action: Action,
 }
 
@@ -102,7 +109,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
 
     let mut bindings: Vec<Binding> = Vec::new();
     for (combo, action_name) in &raw.hotkeys {
-        let (key, shift) = match parse_combo(combo) {
+        let parsed = match parse_combo(combo) {
             Ok(parsed) => parsed,
             Err(e) => {
                 errors.push(e);
@@ -119,11 +126,14 @@ pub fn parse(text: &str) -> Result<Config, String> {
             });
             continue;
         };
-        if bindings.iter().any(|b| b.key == key && b.shift == shift) {
+        if bindings.iter().any(|b| b.combo == parsed) {
             errors.push(format!("\"{combo}\" is bound more than once"));
             continue;
         }
-        bindings.push(Binding { key, shift, action });
+        bindings.push(Binding {
+            combo: parsed,
+            action,
+        });
     }
 
     // Kept only to explain the change to anyone whose file still has it.
@@ -213,8 +223,8 @@ pub fn parse(text: &str) -> Result<Config, String> {
             }
         };
         // One key, one job: it can't also be a [hotkeys] binding or another app's key.
-        if let Some((code, shift)) = key {
-            let in_hotkeys = bindings.iter().any(|b| b.key == code && b.shift == shift);
+        if let Some(parsed) = key {
+            let in_hotkeys = bindings.iter().any(|b| b.combo == parsed);
             let in_launcher = launcher.iter().any(|f| f.key == key);
             if in_hotkeys || in_launcher {
                 let combo = entry.key.as_deref().unwrap_or_default();
@@ -245,16 +255,27 @@ pub fn parse(text: &str) -> Result<Config, String> {
     })
 }
 
-/// "shift+left" -> (VK_LEFT, true). Case and spaces don't matter.
-fn parse_combo(combo: &str) -> Result<(u16, bool), String> {
+/// "ctrl+shift+left" -> SUPER + Ctrl + Shift + Left. Modifiers come before the key, in
+/// any order; case and spaces don't matter.
+fn parse_combo(combo: &str) -> Result<Combo, String> {
     let lower = combo.to_ascii_lowercase().replace(' ', "");
-    let (shift, key_name) = match lower.strip_prefix("shift+") {
-        Some(rest) => (true, rest),
-        None => (false, lower.as_str()),
-    };
-    key_code(key_name)
-        .map(|key| (key, shift))
-        .ok_or_else(|| format!("\"{combo}\": unknown key \"{key_name}\""))
+    let mut parts: Vec<&str> = lower.split('+').collect();
+    let key_name = parts.pop().unwrap_or_default();
+    let (mut shift, mut ctrl) = (false, false);
+    for modifier in parts {
+        match modifier {
+            "shift" => shift = true,
+            "ctrl" => ctrl = true,
+            _ => {
+                return Err(format!(
+                    "\"{combo}\": unknown modifier \"{modifier}\" (use shift or ctrl)"
+                ));
+            }
+        }
+    }
+    let key =
+        key_code(key_name).ok_or_else(|| format!("\"{combo}\": unknown key \"{key_name}\""))?;
+    Ok(Combo { key, shift, ctrl })
 }
 
 /// Windows virtual-key code for a key name.
@@ -299,7 +320,7 @@ fn parse_color(text: &str) -> Result<u32, String> {
     Ok((b << 16) | (g << 8) | r)
 }
 
-const ACTION_NAMES: [(&str, Action); 25] = [
+const ACTION_NAMES: [(&str, Action); 30] = [
     ("open_launcher", Action::OpenLauncher),
     ("focus_left", Action::FocusLeft),
     ("focus_right", Action::FocusRight),
@@ -310,6 +331,11 @@ const ACTION_NAMES: [(&str, Action); 25] = [
     ("swap_up", Action::SwapUp),
     ("swap_down", Action::SwapDown),
     ("promote", Action::Promote),
+    ("resize_left", Action::ResizeLeft),
+    ("resize_right", Action::ResizeRight),
+    ("resize_up", Action::ResizeUp),
+    ("resize_down", Action::ResizeDown),
+    ("reset_sizes", Action::ResetSizes),
     ("workspace_1", Action::Workspace1),
     ("workspace_2", Action::Workspace2),
     ("workspace_3", Action::Workspace3),
@@ -339,6 +365,10 @@ fn action_from_name(name: &str) -> Option<Action> {
 mod tests {
     use super::*;
 
+    fn combo(key: u16, shift: bool, ctrl: bool) -> Combo {
+        Combo { key, shift, ctrl }
+    }
+
     #[test]
     fn every_action_has_a_name() {
         for action in Action::ALL {
@@ -360,7 +390,10 @@ mod tests {
         }
         // Win+Enter opens Windows Terminal, as a launcher app.
         let terminal = config.launcher.iter().find(|app| app.open == "wt.exe");
-        assert_eq!(terminal.and_then(|app| app.key), Some((0x0D, false)));
+        assert_eq!(
+            terminal.and_then(|app| app.key),
+            Some(combo(0x0D, false, false))
+        );
         assert_eq!(config.gap, 8);
         assert_eq!(config.border_color, 0x0016_73F9); // #F97316
         assert_eq!(config.corners, 1); // square
@@ -412,8 +445,11 @@ mod tests {
         let app =
             |key: &str| format!("[[launcher]]\nname = \"A\"\nopen = \"a.exe\"\nkey = \"{key}\"\n");
         let key = |text: &str| parse(text).map(|c| c.launcher[0].key);
-        assert_eq!(key(&app("b")), Ok(Some((b'B' as u16, false))));
-        assert_eq!(key(&app("Shift+S")), Ok(Some((b'S' as u16, true))));
+        assert_eq!(key(&app("b")), Ok(Some(combo(b'B' as u16, false, false))));
+        assert_eq!(
+            key(&app("Shift+S")),
+            Ok(Some(combo(b'S' as u16, true, false)))
+        );
         assert_eq!(
             key("[[launcher]]\nname = \"A\"\nopen = \"a.exe\""),
             Ok(None)
@@ -470,13 +506,28 @@ mod tests {
 
     #[test]
     fn combos_parse() {
-        assert_eq!(parse_combo("enter"), Ok((0x0D, false)));
-        assert_eq!(parse_combo("Shift + Left"), Ok((0x25, true)));
-        assert_eq!(parse_combo("shift+q"), Ok((b'Q' as u16, true)));
-        assert_eq!(parse_combo("7"), Ok((b'7' as u16, false)));
-        assert_eq!(parse_combo("f12"), Ok((0x7B, false)));
+        assert_eq!(parse_combo("enter"), Ok(combo(0x0D, false, false)));
+        assert_eq!(parse_combo("Shift + Left"), Ok(combo(0x25, true, false)));
+        assert_eq!(parse_combo("shift+q"), Ok(combo(b'Q' as u16, true, false)));
+        assert_eq!(parse_combo("7"), Ok(combo(b'7' as u16, false, false)));
+        assert_eq!(parse_combo("f12"), Ok(combo(0x7B, false, false)));
         assert!(parse_combo("f13").is_err());
-        assert!(parse_combo("ctrl+a").is_err());
+    }
+
+    #[test]
+    fn ctrl_combos_parse_in_any_order() {
+        assert_eq!(parse_combo("ctrl+left"), Ok(combo(0x25, false, true)));
+        assert_eq!(
+            parse_combo("ctrl+shift+a"),
+            Ok(combo(b'A' as u16, true, true))
+        );
+        assert_eq!(
+            parse_combo("Shift+Ctrl+A"),
+            Ok(combo(b'A' as u16, true, true))
+        );
+        assert!(parse_combo("alt+a").is_err());
+        // Ctrl makes it a different hotkey, so both can be bound.
+        assert!(parse("[hotkeys]\n\"left\" = \"focus_left\"\n\"ctrl+left\" = \"quit\"").is_ok());
     }
 
     #[test]
@@ -503,7 +554,7 @@ mod tests {
             errors.contains("unknown action \"launch_rocket\""),
             "{errors}"
         );
-        assert!(errors.contains("unknown key \"hyper+a\""), "{errors}");
+        assert!(errors.contains("unknown modifier \"hyper\""), "{errors}");
         assert!(errors.contains("bound more than once"), "{errors}");
         assert!(errors.contains("gap must be between 0 and 100"), "{errors}");
     }

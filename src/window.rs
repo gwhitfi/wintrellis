@@ -1,10 +1,11 @@
-use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetClassNameW, GetWindow,
-    GetWindowLongPtrW, GetWindowTextW, IsIconic, IsWindowVisible, WS_EX_TOOLWINDOW, WS_THICKFRAME,
+    GetWindowLongPtrW, GetWindowTextW, IsIconic, IsWindowVisible, MINMAXINFO, SMTO_ABORTIFHUNG,
+    SendMessageTimeoutW, WM_GETMINMAXINFO, WS_EX_TOOLWINDOW, WS_THICKFRAME,
 };
 use windows::core::BOOL;
 
@@ -98,6 +99,29 @@ pub fn visible_rect(hwnd: HWND) -> Option<Rect> {
         w: r.right - r.left,
         h: r.bottom - r.top,
     })
+}
+
+/// The smallest size the window's app allows, as (width, height) of the whole window
+/// (invisible borders included), or (0, 0) if it sets none. Asked with
+/// WM_GETMINMAXINFO, which Windows passes on to other programs' windows; an app that's
+/// hung is given up on after 50 ms.
+pub fn min_size(hwnd: HWND) -> (i32, i32) {
+    let mut info = MINMAXINFO::default();
+    let answered = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_GETMINMAXINFO,
+            WPARAM(0),
+            LPARAM(&mut info as *mut MINMAXINFO as isize),
+            SMTO_ABORTIFHUNG,
+            50,
+            None,
+        )
+    };
+    if answered.0 == 0 {
+        return (0, 0);
+    }
+    (info.ptMinTrackSize.x, info.ptMinTrackSize.y)
 }
 
 pub fn title(hwnd: HWND) -> String {

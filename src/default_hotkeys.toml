@@ -1,4 +1,5 @@
-# WinTrellis settings. Every hotkey uses the Win key (SUPER); add "shift+" for Shift too.
+# WinTrellis settings. Every hotkey uses the Win key (SUPER); add "shift+" and/or
+# "ctrl+" for Shift and Ctrl too, e.g. "ctrl+left" is Win+Ctrl+Left.
 #
 # Keys: a-z, 0-9, f1-f12, enter, space, escape, tab, backspace, delete,
 #       left, right, up, down, home, end, pageup, pagedown
@@ -7,33 +8,46 @@
 #          close_window, toggle_floating, quit,
 #          reload_config, edit_config (opens this file in Notepad),
 #          focus_left/right/up/down, swap_left/right/up/down, promote,
+#          resize_left/right/up/down (move the focused window's border that way),
+#          reset_sizes (all borders back to the middle),
 #          workspace_1 .. workspace_5, move_to_workspace_1 .. move_to_workspace_5
 
 [hotkeys]
-"t" = "open_launcher"
-"shift+enter" = "promote"
-"shift+q" = "close_window"
-"shift+space" = "toggle_floating"
-"escape" = "quit"
-"shift+r" = "reload_config"
-"shift+e" = "edit_config"
+"t" = "open_launcher" # Custom WinTrellis program launcher
+"shift+enter" = "promote" # Focused window moves to the large left window
+"shift+q" = "close_window" # Close focused window
+"shift+space" = "toggle_floating" # Focused window moves out of snap grid and floats in center of screen
+"escape" = "quit" # Exit WinTrellis program
+"shift+r" = "reload_config" # Reload settings after making changes, take effect immediately
+"shift+e" = "edit_config" # Open hotkeys.toml file to edit custom config
 
+# Change focus window
 "left" = "focus_left"
 "right" = "focus_right"
 "up" = "focus_up"
 "down" = "focus_down"
 
+# Swap focus window to another location
 "shift+left" = "swap_left"
 "shift+right" = "swap_right"
 "shift+up" = "swap_up"
 "shift+down" = "swap_down"
 
+# Resize focus window, cannot force neighbor window into smaller size than it's minimum
+"ctrl+left" = "resize_left"
+"ctrl+right" = "resize_right"
+"ctrl+up" = "resize_up"
+"ctrl+down" = "resize_down"
+"ctrl+backspace" = "reset_sizes"
+
+# If multiple monitors, each monitor has separate workspaces
 "1" = "workspace_1"
 "2" = "workspace_2"
 "3" = "workspace_3"
 "4" = "workspace_4"
 "5" = "workspace_5"
 
+# Move focus window to a new workspace
 "shift+1" = "move_to_workspace_1"
 "shift+2" = "move_to_workspace_2"
 "shift+3" = "move_to_workspace_3"
@@ -41,30 +55,24 @@
 "shift+5" = "move_to_workspace_5"
 
 [settings]
-# Pixels between tiled windows and around the screen edge.
-gap = 8
-# Focused window's border, as #RRGGBB.
-border_color = "#F97316"
-# "overlay": drawn by WinTrellis, works on every app, `border_width` pixels thick.
-# "native": recolors Windows' own 1px border; some apps (Windows Terminal, Discord) ignore it.
-border_style = "overlay"
-border_width = 3
-# Overlay border corner radius in pixels (0 = square). Leave it out to match `corners`.
-# border_radius = 12
-# Window corners: square, small, round, or default (Windows decides).
-corners = "square"
+gap = 8 # Pixels between tiled windows and around the screen edge
+border_color = "#FFFFFF" # Focused window's border color #RRGGBB
+border_style = "overlay" # "overlay" drawn by WinTrellis, works with every app. "native" recolors Windows borders only
+border_width = 1
+# border_radius = 12 # Overlay border corner radius in pixels, 0 = square. Comment out to match "corners" below.
+corners = "default" # square, small, round, or default (windows default)
 
-[transparency]
-# Windows of these programs turn see-through while they don't have focus.
-# Some apps draw incorrectly when see-through (often games and Chromium/Electron apps);
-# if one flickers or goes black, take it off the list.
-apps = ["discord.exe", "steam.exe"]
-# How solid they are while unfocused: 0.1 (barely visible) to 1.0 (solid).
-opacity = 0.9
+[transparency] # Add transparency to unfocused windows (off by default)
+#apps = ["discord.exe", "steam.exe"] # Any apps you want transparency
+# 0.1 (barely visible) to 1.0 (solid).
+# opacity = 0.9
 
-# Apps in the launcher (Win+T: type to search, Enter to open), in this order.
-# `open` is anything the Run dialog (Win+R) accepts: a program, a full path, or a link.
-# `key` (optional) also gives the app its own hotkey: Win + key, e.g. "b" or "shift+b".
+### LAUNCHER SETTINGS ###
+# Apps in the launcher (Win+T: type to search, Enter to open)
+# "name" display name in launcher
+# "open" anything the Run dialog (Win+R) accepts: a program, a full path, or a link
+# "key" (optional) open app with dedicated hotkey. Example: Win+B for Firefox
+
 [[launcher]]
 name = "Terminal"
 open = "wt.exe"

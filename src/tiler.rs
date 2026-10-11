@@ -10,7 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
 };
 
-use crate::layout::{self, Rect};
+use crate::layout::{self, Rect, Splits};
 use crate::{settings, window};
 
 thread_local! {
@@ -28,7 +28,8 @@ const TOO_BIG_LEEWAY: i32 = 10;
 ///
 /// Returns the tiled windows that ended up bigger than their slot: apps can set a
 /// minimum size, which Windows enforces even when another program resizes them.
-pub fn retile(windows: &[HWND]) -> Vec<HWND> {
+/// `splits` gives each monitor's dividing lines (those of the workspace it's showing).
+pub fn retile(windows: &[HWND], splits: impl Fn(HMONITOR) -> Splits) -> Vec<HWND> {
     let mut moves = Vec::new();
     let mut tiled = Vec::new();
     let mut overflow = Vec::new();
@@ -36,7 +37,7 @@ pub fn retile(windows: &[HWND]) -> Vec<HWND> {
         let Some(area) = work_area(monitor) else {
             continue;
         };
-        let slots = layout::layout(area, group.len(), settings::gap());
+        let slots = layout::layout(area, group.len(), settings::gap(), splits(monitor));
         for (&hwnd, slot) in group.iter().zip(&slots) {
             moves.push((hwnd, outer_rect(hwnd, *slot)));
             tiled.push((hwnd, *slot));
@@ -64,6 +65,27 @@ pub fn retile(windows: &[HWND]) -> Vec<HWND> {
         .collect()
 }
 
+/// Whether `windows` (all on one monitor, in slot order) would fit their slots with the
+/// dividing lines at `splits`, going by the minimum size each app reports. Moves
+/// nothing, so a resize that wouldn't fit can be skipped before anything moves.
+pub fn fits(windows: &[HWND], splits: Splits) -> bool {
+    let Some(&first) = windows.first() else {
+        return true;
+    };
+    let Some(area) = work_area(monitor_of(first)) else {
+        return true;
+    };
+    let slots = layout::layout(area, windows.len(), settings::gap(), splits);
+    windows.iter().zip(&slots).all(|(&hwnd, slot)| {
+        // The minimum is for the whole window, so compare it with the slot plus the
+        // window's invisible borders.
+        let b = invisible_borders(hwnd).unwrap_or_default();
+        let (min_w, min_h) = window::min_size(hwnd);
+        min_w <= slot.w + b.left + b.right + TOO_BIG_LEEWAY
+            && min_h <= slot.h + b.top + b.bottom + TOO_BIG_LEEWAY
+    })
+}
+
 /// Reorders windows so each keeps the slot it currently covers, so an existing
 /// arrangement survives restarting WinTrellis. Used once, on startup.
 pub fn order_by_position(windows: &[HWND]) -> Vec<HWND> {
@@ -73,7 +95,7 @@ pub fn order_by_position(windows: &[HWND]) -> Vec<HWND> {
             ordered.extend(group);
             continue;
         };
-        let slots = layout::layout(area, group.len(), settings::gap());
+        let slots = layout::layout(area, group.len(), settings::gap(), Splits::EVEN);
         let rects: Vec<Rect> = group
             .iter()
             .map(|&hwnd| window::visible_rect(hwnd).unwrap_or_default())
