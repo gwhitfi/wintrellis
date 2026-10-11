@@ -19,10 +19,18 @@ thread_local! {
     static CENTERED: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
 }
 
+/// How much bigger than its slot a window may end up before it counts as not fitting.
+/// Some apps round their size a little (e.g. to whole lines of text).
+const TOO_BIG_LEEWAY: i32 = 10;
+
 /// Moves every window into its slot. Windows are tiled on whichever monitor they're
 /// currently on, in list order. Windows beyond `layout::MAX_TILED` float, centered.
-pub fn retile(windows: &[HWND]) {
+///
+/// Returns the tiled windows that ended up bigger than their slot: apps can set a
+/// minimum size, which Windows enforces even when another program resizes them.
+pub fn retile(windows: &[HWND]) -> Vec<HWND> {
     let mut moves = Vec::new();
+    let mut tiled = Vec::new();
     let mut overflow = Vec::new();
     for (monitor, group) in group_by_monitor(windows) {
         let Some(area) = work_area(monitor) else {
@@ -31,6 +39,7 @@ pub fn retile(windows: &[HWND]) {
         let slots = layout::layout(area, group.len(), settings::gap());
         for (&hwnd, slot) in group.iter().zip(&slots) {
             moves.push((hwnd, outer_rect(hwnd, *slot)));
+            tiled.push((hwnd, *slot));
         }
         for &hwnd in &group[slots.len()..] {
             if !CENTERED.with_borrow(|centered| centered.contains(&hwnd))
@@ -44,6 +53,15 @@ pub fn retile(windows: &[HWND]) {
     // Forget windows that are tiled again (or gone), so they re-center if they overflow later.
     CENTERED.set(overflow);
     move_windows(&moves);
+    // Moving is synchronous: each window has applied its minimum size by now.
+    tiled
+        .into_iter()
+        .filter(|&(hwnd, slot)| {
+            window::visible_rect(hwnd)
+                .is_some_and(|r| r.w > slot.w + TOO_BIG_LEEWAY || r.h > slot.h + TOO_BIG_LEEWAY)
+        })
+        .map(|(hwnd, _)| hwnd)
+        .collect()
 }
 
 /// Reorders windows so each keeps the slot it currently covers, so an existing

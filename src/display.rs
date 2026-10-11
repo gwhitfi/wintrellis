@@ -3,8 +3,6 @@
 //! broadcasts these to top-level windows, so we create an invisible one.
 //! It also hears about logoff/shutdown, which is likewise only sent to windows.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -17,13 +15,6 @@ use windows::core::w;
 
 use crate::keyboard::WM_ACTION;
 use crate::{shutdown, tracker, tray};
-
-/// The listener window, once created. Popup menus (tray, launcher) use it as their owner.
-static LISTENER: AtomicUsize = AtomicUsize::new(0);
-
-pub fn listener() -> HWND {
-    HWND(LISTENER.load(Ordering::Relaxed) as _)
-}
 
 /// Creates the hidden listener window. It's never shown. Must be called on the
 /// message-loop thread, since that's where its messages are delivered.
@@ -52,7 +43,6 @@ pub fn create_listener() -> windows::core::Result<HWND> {
             None,
         )
     }
-    .inspect(|hwnd| LISTENER.store(hwnd.0 as usize, Ordering::Relaxed))
 }
 
 unsafe extern "system" fn on_message(

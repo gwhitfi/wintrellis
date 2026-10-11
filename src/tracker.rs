@@ -48,8 +48,28 @@ thread_local! {
 /// Handles WM_RETILE: moves every managed window into its slot.
 pub fn retile() {
     RETILE_PENDING.set(false);
-    tiler::retile(&tiled());
+    let too_big = tiler::retile(&tiled());
+    for hwnd in too_big {
+        float_too_big(hwnd);
+    }
     border::reposition();
+}
+
+/// A window that can't shrink to fit its slot (it has a minimum size) floats instead,
+/// centered, and the others are retiled without it. Win+Shift+Space tries tiling it
+/// again, e.g. once there's more room.
+fn float_too_big(hwnd: HWND) {
+    MANAGED.with_borrow_mut(|managed| {
+        if let Some(entry) = managed.iter_mut().find(|e| e.hwnd == hwnd) {
+            entry.floating = true;
+        }
+    });
+    log!(
+        "{hwnd:?} {} is bigger than its slot (minimum size), floating it",
+        window::title(hwnd)
+    );
+    tiler::center(hwnd);
+    request_retile();
 }
 
 pub fn is_managed(hwnd: HWND) -> bool {

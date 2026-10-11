@@ -66,13 +66,12 @@ pub fn show_menu(owner: HWND) -> Option<Action> {
             w!("Reload settings"),
         );
         let autostart_on = autostart::is_enabled();
-        let flags = if autostart_on { MF_STRING | MF_CHECKED } else { MF_STRING };
-        let _ = AppendMenuW(
-            menu,
-            flags,
-            AUTOSTART_ID,
-            w!("Start with Windows"),
-        );
+        let flags = if autostart_on {
+            MF_STRING | MF_CHECKED
+        } else {
+            MF_STRING
+        };
+        let _ = AppendMenuW(menu, flags, AUTOSTART_ID, w!("Start with Windows"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
         let _ = AppendMenuW(menu, MF_STRING, id(Action::Quit), w!("Quit WinTrellis"));
         let mut cursor = POINT::default();

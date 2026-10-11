@@ -8,13 +8,17 @@ mod log;
 mod autostart;
 mod border;
 mod config;
+mod dark_menus;
 mod display;
 mod focus;
 mod hidden;
+mod icons;
 mod keyboard;
 mod launcher;
+mod launcher_draw;
 mod layout;
 mod overlay;
+mod search;
 mod settings;
 mod shutdown;
 mod snap;
@@ -27,9 +31,10 @@ mod window;
 
 use std::process::Command;
 
+use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, MSG, PostQuitMessage,
+    DispatchMessageW, GetMessageW, MSG, PostQuitMessage, TranslateMessage,
 };
 
 use keyboard::{Action, WM_ACTION};
@@ -41,11 +46,18 @@ fn main() {
     hidden::recover();
     hidden::install_panic_hook();
     settings::load();
+    // The shell functions behind launcher icons and `shell:` links need COM on this
+    // thread. Single-threaded mode, since this thread runs a message loop.
+    if let Err(err) = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.ok() {
+        log!("couldn't initialize COM: {err}");
+    }
     overlay::create().unwrap();
+    launcher::create().unwrap();
     let _events = tracker::start();
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();
     let display_listener = display::create_listener().unwrap();
+    dark_menus::enable();
     tray::add(display_listener);
     snap::disable();
     log!("WinTrellis running. SUPER+Enter opens a terminal. SUPER+Esc or Ctrl+C quits.");
@@ -59,8 +71,10 @@ fn main() {
                 }
             }
             tracker::WM_RETILE => tracker::retile(),
-            // Messages addressed to a window (our display listener) go to its handler.
+            // Messages addressed to a window (display listener, launcher) go to its
+            // handler. TranslateMessage turns key presses into WM_CHAR (typed text).
             _ => unsafe {
+                let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             },
         }
