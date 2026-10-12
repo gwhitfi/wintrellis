@@ -229,24 +229,29 @@ pub fn match_slots(slots: &[Rect], windows: &[Rect]) -> Vec<usize> {
     order
 }
 
-/// The workspace bar's bubbles: `count` boxes `w` × `h` pixels in a row, with `space`
-/// pixels around each one, relative to the bar's top-left corner.
-pub fn bar_bubbles(count: usize, w: i32, h: i32, space: i32) -> Vec<Rect> {
-    (0..count as i32)
-        .map(|i| Rect {
-            x: space + i * (w + space),
-            y: space,
-            w,
-            h,
+/// The workspace bar's cells (workspace bubbles, the clock, ...): boxes `h` pixels tall
+/// with the given `widths`, in a row with `space` pixels around each one, relative to
+/// the bar's top-left corner.
+pub fn bar_cells(widths: &[i32], h: i32, space: i32) -> Vec<Rect> {
+    let mut x = space;
+    widths
+        .iter()
+        .map(|&w| {
+            let cell = Rect { x, y: space, w, h };
+            x += w + space;
+            cell
         })
         .collect()
 }
 
-/// The workspace bar's (width, height): just big enough for `bar_bubbles` with the
-/// same arguments, keeping `space` around the outside too.
-pub fn bar_size(count: usize, w: i32, h: i32, space: i32) -> (i32, i32) {
-    let count = count as i32;
-    (count * w + (count + 1) * space, h + 2 * space)
+/// The workspace bar's (width, height): just big enough for `bar_cells` with the same
+/// arguments, keeping `space` around the outside too.
+pub fn bar_size(widths: &[i32], h: i32, space: i32) -> (i32, i32) {
+    let count = widths.len() as i32;
+    (
+        widths.iter().sum::<i32>() + (count + 1) * space,
+        h + 2 * space,
+    )
 }
 
 /// Which of `rects` the point (`x`, `y`) is in, if any (e.g. which bubble was clicked).
@@ -683,18 +688,22 @@ mod tests {
     }
 
     #[test]
-    fn bar_bubbles_sit_in_a_row_inside_the_bar() {
-        let (bubble_w, bubble_h, space) = (30, 14, 6);
-        let bubbles = bar_bubbles(5, bubble_w, bubble_h, space);
-        let (w, h) = bar_size(5, bubble_w, bubble_h, space);
-        assert_eq!(bubbles.len(), 5);
-        for pair in bubbles.windows(2) {
+    fn bar_cells_sit_in_a_row_inside_the_bar() {
+        // Five bubbles and a wider clock.
+        let (widths, cell_h, space) = ([30, 30, 30, 30, 30, 50], 14, 6);
+        let cells = bar_cells(&widths, cell_h, space);
+        let (w, h) = bar_size(&widths, cell_h, space);
+        assert_eq!(cells.len(), 6);
+        for (cell, width) in cells.iter().zip(widths) {
+            assert_eq!(cell.w, width);
+        }
+        for pair in cells.windows(2) {
             // Same row, evenly spaced, not touching.
             assert_eq!(pair[1].y, pair[0].y);
             assert_eq!(pair[1].x - (pair[0].x + pair[0].w), space);
         }
         // `space` left over on every side of the row.
-        let (first, last) = (bubbles[0], bubbles[4]);
+        let (first, last) = (cells[0], cells[5]);
         assert_eq!((first.x, first.y), (space, space));
         assert_eq!(w - (last.x + last.w), space);
         assert_eq!(h - (last.y + last.h), space);
@@ -702,7 +711,7 @@ mod tests {
 
     #[test]
     fn rect_at_finds_the_bubble_under_a_point() {
-        let bubbles = bar_bubbles(5, 30, 14, 6);
+        let bubbles = bar_cells(&[30; 5], 14, 6);
         // Inside the second bubble, including its top-left corner.
         assert_eq!(rect_at(&bubbles, 50, 10), Some(1));
         assert_eq!(rect_at(&bubbles, bubbles[1].x, bubbles[1].y), Some(1));

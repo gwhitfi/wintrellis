@@ -177,12 +177,6 @@ pub fn parse(text: &str) -> Result<Config, String> {
             errors.push(format!("{name} must be between 0 and 100, got {value}"));
         }
     }
-    let color = raw.settings.border_color.as_deref().unwrap_or("#F97316");
-    let border_color = parse_color(color).unwrap_or_else(|e| {
-        errors.push(e);
-        0
-    });
-
     let theme = raw.settings.theme.as_deref().and_then(|name| {
         let found = theme::named(name);
         if found.is_none() {
@@ -193,6 +187,15 @@ pub fn parse(text: &str) -> Result<Config, String> {
         }
         found
     });
+    // A border_color in the file wins; without one, the theme's accent; without a
+    // theme either, orange.
+    let border_color = match raw.settings.border_color.as_deref() {
+        Some(color) => parse_color(color).unwrap_or_else(|e| {
+            errors.push(e);
+            0
+        }),
+        None => theme.map_or(0x0016_73F9, |t| t.accent), // #F97316
+    };
 
     let style = raw.settings.border_style.as_deref().unwrap_or("overlay");
     let overlay_border = match style.trim().to_ascii_lowercase().as_str() {
@@ -459,6 +462,16 @@ mod tests {
         let config = parse("[settings]\ntheme = \"Rose-Pine-Moon\"").unwrap();
         assert_eq!(config.theme, theme::named("rose-pine-moon"));
         assert!(parse("[settings]\ntheme = \"neon\"").is_err());
+    }
+
+    #[test]
+    fn border_color_follows_the_theme_unless_set() {
+        let dracula = theme::named("dracula").unwrap();
+        let themed = parse("[settings]\ntheme = \"dracula\"").unwrap();
+        assert_eq!(themed.border_color, dracula.accent);
+        let set = parse("[settings]\ntheme = \"dracula\"\nborder_color = \"#FF0000\"").unwrap();
+        assert_eq!(set.border_color, 0x0000_00FF);
+        assert_eq!(parse("").unwrap().border_color, 0x0016_73F9); // orange
     }
 
     #[test]

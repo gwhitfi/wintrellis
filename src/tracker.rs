@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Graphics::Gdi::HMONITOR;
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_SHOW,
@@ -49,6 +50,20 @@ thread_local! {
     /// True while the desktop is getting focus because we focused it (an empty workspace),
     /// not because it was clicked. Its focus event then leaves `FOCUSED_MONITOR` alone.
     static FOCUSING_DESKTOP: Cell<bool> = const { Cell::new(false) };
+
+    /// The managed window that has focus, and the monitor it was on.
+    static FOCUSED_WINDOW: Cell<Option<(HWND, HMONITOR)>> = const { Cell::new(None) };
+
+    /// The managed window that had focus before that one, its monitor, and when focus
+    /// left it. Windows may report focus jumping away from a closing window before it
+    /// reports the window closing.
+    static PREVIOUS_FOCUS: Cell<Option<(HWND, HMONITOR, u32)>> = const { Cell::new(None) };
+
+    /// Set when the focused window closed (or minimized) and left its monitor's workspace
+    /// empty: that monitor, and when (milliseconds since Windows started). Windows then
+    /// hands focus to some window, often on another monitor; that one automatic jump is
+    /// ignored, so workspace hotkeys stay on the empty monitor.
+    static KEPT: Cell<Option<(HMONITOR, u32)>> = const { Cell::new(None) };
 
     /// The window being dragged/resized with the mouse, and the monitor it started on.
     static DRAG_START: Cell<Option<(HWND, HMONITOR)>> = const { Cell::new(None) };
@@ -324,6 +339,10 @@ pub fn switch_workspace_on(monitor: HMONITOR, n: u8) {
     request_retile();
 }
 
+/// How long after keeping a monitor (see `KEPT`) a focus jump to another monitor is
+/// taken as Windows' automatic one, not the user's.
+const KEEP_MS: u32 = 500;
+
 /// Focuses the desktop without changing which monitor workspace hotkeys act on (the
 /// desktop spans every monitor, so its focus event can't tell which one is meant).
 fn focus_desktop() {
@@ -535,7 +554,7 @@ unsafe extern "system" fn on_win_event(
     id_object: i32,
     id_child: i32,
     _thread: u32,
-    _time: u32,
+    time: u32,
 ) {
     // Only care about windows themselves, not parts of them (scrollbars, carets, ...).
     if id_object != OBJID_WINDOW.0 || id_child != CHILDID_SELF as i32 {
@@ -544,7 +563,16 @@ unsafe extern "system" fn on_win_event(
     match event {
         EVENT_SYSTEM_FOREGROUND => {
             if is_managed(hwnd) {
-                FOCUSED_MONITOR.set(Some(tiler::monitor_of(hwnd)));
+                let monitor = tiler::monitor_of(hwnd);
+                if !is_automatic_jump(monitor, time) {
+                    FOCUSED_MONITOR.set(Some(monitor));
+                }
+                if let Some((old, old_monitor)) = FOCUSED_WINDOW.get()
+                    && old != hwnd
+                {
+                    PREVIOUS_FOCUS.set(Some((old, old_monitor, time)));
+                }
+                FOCUSED_WINDOW.set(Some((hwnd, monitor)));
             } else if window::is_desktop(hwnd) && !FOCUSING_DESKTOP.replace(false) {
                 // Clicked: the desktop covers every monitor, so use the one under the mouse.
                 FOCUSED_MONITOR.set(Some(tiler::monitor_at_cursor()));
@@ -581,6 +609,12 @@ unsafe extern "system" fn on_win_event(
 /// and takes the next free slot.
 fn dropped(hwnd: HWND) {
     let monitor = tiler::monitor_of(hwnd);
+    // It may have changed monitor; keep the focused window's record right.
+    if let Some((focused, _)) = FOCUSED_WINDOW.get()
+        && focused == hwnd
+    {
+        FOCUSED_WINDOW.set(Some((hwnd, monitor)));
+    }
     if let Some((dragged, start)) = DRAG_START.take()
         && dragged == hwnd
         && start != monitor
@@ -620,12 +654,61 @@ fn add(hwnd: HWND) {
 }
 
 fn remove(hwnd: HWND) {
-    MANAGED.with_borrow_mut(|managed| {
-        if let Some(index) = managed.iter().position(|e| e.hwnd == hwnd) {
-            managed.remove(index);
-            style::release(hwnd);
-            log!("- {hwnd:?}  ({} managed)", managed.len());
-            request_retile();
-        }
+    let removed = MANAGED.with_borrow_mut(|managed| {
+        let index = managed.iter().position(|e| e.hwnd == hwnd)?;
+        managed.remove(index);
+        style::release(hwnd);
+        log!("- {hwnd:?}  ({} managed)", managed.len());
+        request_retile();
+        Some(())
     });
+    if removed.is_some() {
+        keep_monitor_if_emptied(hwnd);
+    }
+}
+
+/// `hwnd` just stopped being managed (closed, minimized, hidden). If it had focus and
+/// was the last window on its monitor's workspace, workspace hotkeys stay on that
+/// monitor instead of following focus wherever Windows sends it next, and the desktop
+/// is focused, as when switching to an empty workspace.
+fn keep_monitor_if_emptied(hwnd: HWND) {
+    let now = unsafe { GetTickCount() };
+    // Either it has focus, or focus left it a moment ago (Windows already reported the
+    // jump to another window).
+    let (monitor, already_jumped) = match (FOCUSED_WINDOW.get(), PREVIOUS_FOCUS.get()) {
+        (Some((focused, monitor)), _) if focused == hwnd => (monitor, false),
+        (_, Some((previous, monitor, at)))
+            if previous == hwnd && now.wrapping_sub(at) < KEEP_MS =>
+        {
+            (monitor, true)
+        }
+        _ => return,
+    };
+    if managed()
+        .into_iter()
+        .any(|h| tiler::monitor_of(h) == monitor)
+    {
+        return; // other windows are still showing there
+    }
+    PREVIOUS_FOCUS.set(None);
+    FOCUSED_MONITOR.set(Some(monitor));
+    if !already_jumped {
+        // The jump is still to come: ignore it when it arrives.
+        FOCUSED_WINDOW.set(None);
+        KEPT.set(Some((monitor, now)));
+    }
+    log!("last window on its monitor closed: workspace keys stay there");
+    focus_desktop();
+}
+
+/// Whether focus arriving on `monitor` at `time` (milliseconds since Windows started,
+/// as WinEvents report it) is Windows' own jump right after `keep_monitor_if_emptied`,
+/// which shouldn't move workspace hotkeys. Only the first focus change after keeping
+/// counts.
+fn is_automatic_jump(monitor: HMONITOR, time: u32) -> bool {
+    match KEPT.take() {
+        // `wrapping_sub`: the millisecond count wraps around every 49.7 days.
+        Some((kept, at)) => kept != monitor && time.wrapping_sub(at) < KEEP_MS,
+        None => false,
+    }
 }

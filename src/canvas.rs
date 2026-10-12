@@ -243,7 +243,9 @@ pub fn text_width(text: &str, format: &IDWriteTextFormat) -> Result<f32> {
     let wide: Vec<u16> = text.encode_utf16().collect();
     let mut metrics = DWRITE_TEXT_METRICS::default();
     unsafe {
-        let layout = text_factory()?.CreateTextLayout(&wide, format, f32::MAX, f32::MAX)?;
+        // A box far wider than any text, but not f32::MAX: centered text sits in the
+        // middle of the box, and the middle of an infinite box breaks the measurement.
+        let layout = text_factory()?.CreateTextLayout(&wide, format, 100_000.0, 100_000.0)?;
         layout.GetMetrics(&mut metrics)?;
     }
     Ok(metrics.widthIncludingTrailingWhitespace)

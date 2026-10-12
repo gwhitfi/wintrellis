@@ -56,7 +56,7 @@
 
 [settings]
 gap = 8 # Pixels between tiled windows and around the screen edge
-border_color = "#FFFFFF" # Focused window's border color #RRGGBB
+border_color = "#FFFFFF" # Focused window's border color #RRGGBB. Comment out to use the theme's accent
 border_style = "overlay" # "overlay" drawn by WinTrellis, works with every app. "native" recolors Windows borders only
 border_width = 1
 # border_radius = 12 # Overlay border corner radius in pixels, 0 = square. Comment out to match "corners" below.
@@ -65,7 +65,7 @@ workspace_bar = true # Bubbles for workspaces 1-5 at the top center of each moni
 bar_margin = 6 # Pixels from the top of the screen to the bar (scaled with the display)
 bar_padding = 6 # Pixels around and between the bubbles inside the bar (scaled with the display)
 # bar_gap = 8 # Pixels between the bar and the windows below it, like "gap". Comment out to use "gap"
-# theme = "catppuccin-mocha" # Colors for the workspace bar and launcher. Comment out for dark gray with border_color as the accent
+# theme = "catppuccin-mocha" # Colors for the workspace bar, launcher and (if border_color is commented out) the focus border. Comment out for dark gray
 #   catppuccin-latte, catppuccin-frappe, catppuccin-macchiato, catppuccin-mocha,
 #   rose-pine, rose-pine-moon, rose-pine-dawn, nord, dracula, gruvbox-dark, tokyo-night
 
