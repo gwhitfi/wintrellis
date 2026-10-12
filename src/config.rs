@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::keyboard::Action;
+use crate::theme::{self, Theme};
 
 /// Written to disk the first time WinTrellis runs, and used if the file can't be read.
 pub const DEFAULT: &str = include_str!("default_hotkeys.toml");
@@ -40,6 +41,8 @@ pub struct Config {
     pub bar_padding: i32,
     /// Pixels between the bar and the windows below it (like `gap`, not scaled).
     pub bar_gap: i32,
+    /// A named color theme; `None` keeps the built-in look.
+    pub theme: Option<Theme>,
 }
 
 /// One `[[launcher]]` entry: an app in the launcher, optionally with its own hotkey.
@@ -104,6 +107,7 @@ struct RawSettings {
     bar_margin: Option<i32>,
     bar_padding: Option<i32>,
     bar_gap: Option<i32>,
+    theme: Option<String>,
 }
 
 #[derive(Default, Deserialize)]
@@ -177,6 +181,17 @@ pub fn parse(text: &str) -> Result<Config, String> {
     let border_color = parse_color(color).unwrap_or_else(|e| {
         errors.push(e);
         0
+    });
+
+    let theme = raw.settings.theme.as_deref().and_then(|name| {
+        let found = theme::named(name);
+        if found.is_none() {
+            errors.push(format!(
+                "theme must be one of {}, got \"{name}\"",
+                theme::names()
+            ));
+        }
+        found
     });
 
     let style = raw.settings.border_style.as_deref().unwrap_or("overlay");
@@ -281,6 +296,7 @@ pub fn parse(text: &str) -> Result<Config, String> {
         bar_margin,
         bar_padding,
         bar_gap,
+        theme,
     })
 }
 
@@ -435,6 +451,14 @@ mod tests {
         assert!(config.workspace_bar);
         assert_eq!((config.bar_margin, config.bar_padding), (6, 6));
         assert_eq!(config.bar_gap, config.gap); // commented out: follows gap
+        assert_eq!(config.theme, None); // commented out: the built-in look
+    }
+
+    #[test]
+    fn theme_parses_by_name() {
+        let config = parse("[settings]\ntheme = \"Rose-Pine-Moon\"").unwrap();
+        assert_eq!(config.theme, theme::named("rose-pine-moon"));
+        assert!(parse("[settings]\ntheme = \"neon\"").is_err());
     }
 
     #[test]

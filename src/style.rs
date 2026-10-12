@@ -27,8 +27,8 @@ pub fn release(hwnd: HWND) {
     transparency::restore(hwnd);
 }
 
-/// All of these attributes take a 4-byte value.
-fn set(hwnd: HWND, attribute: DWMWINDOWATTRIBUTE, value: i32) {
+/// Sets a DWM attribute that takes a 4-byte value (all of the ones we use do).
+pub fn set(hwnd: HWND, attribute: DWMWINDOWATTRIBUTE, value: i32) {
     let _ = unsafe {
         DwmSetWindowAttribute(
             hwnd,

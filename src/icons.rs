@@ -4,47 +4,130 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use windows::Win32::Foundation::SIZE;
-use windows::Win32::Graphics::Gdi::HBITMAP;
+use windows::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC,
+    DeleteObject, GetDIBits, GetObjectW, HBITMAP,
+};
 use windows::Win32::Storage::FileSystem::SearchPathW;
 use windows::Win32::System::Registry::{
     HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW,
 };
 use windows::Win32::UI::Shell::{
     ASSOCF_NONE, ASSOCSTR_EXECUTABLE, AssocQueryStringW, IShellItemImageFactory,
-    SHCreateItemFromParsingName, SIIGBF_ICONONLY,
+    SHCreateItemFromParsingName, SIIGBF, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::core::{HSTRING, PWSTR, w};
 
+use crate::pixels;
+
+/// An icon's pixels: blue, green, red and premultiplied alpha bytes, top row first
+/// (what Direct2D draws). `Rc`: shared, not copied, on every repaint.
+pub type Pixels = Rc<[u8]>;
+
 thread_local! {
     /// (target, size in pixels) -> icon, or `None` if it has no icon we could find.
-    static CACHE: RefCell<HashMap<(String, i32), Option<HBITMAP>>> = RefCell::new(HashMap::new());
+    static CACHE: RefCell<HashMap<(String, i32), Option<Pixels>>> = RefCell::new(HashMap::new());
 }
 
-/// The icon of the app `target` opens, `size` pixels square, as a 32-bit bitmap with
-/// transparency (what menu items take). Needs COM initialized on this thread.
-pub fn for_target(target: &str, size: i32) -> Option<HBITMAP> {
+/// The icon of the app `target` opens, `size` × `size` pixels. Needs COM initialized on
+/// this thread.
+pub fn for_target(target: &str, size: i32) -> Option<Pixels> {
     CACHE.with_borrow_mut(|cache| {
-        *cache
+        cache
             .entry((target.to_string(), size))
             .or_insert_with(|| load(target, size))
+            .clone()
     })
 }
 
-fn load(target: &str, size: i32) -> Option<HBITMAP> {
+fn load(target: &str, size: i32) -> Option<Pixels> {
     let Some(source) = icon_source(target) else {
         log!("no icon for {target}: couldn't find the program it opens");
         return None;
     };
-    let image = unsafe {
-        let factory: IShellItemImageFactory =
-            SHCreateItemFromParsingName(&HSTRING::from(&source), None).ok()?;
-        factory.GetImage(SIZE { cx: size, cy: size }, SIIGBF_ICONONLY)
-    };
-    image
+    let factory: IShellItemImageFactory =
+        unsafe { SHCreateItemFromParsingName(&HSTRING::from(&source), None) }.ok()?;
+    let get = |flags: SIIGBF| unsafe { factory.GetImage(SIZE { cx: size, cy: size }, flags) };
+    // "A bigger one is fine": if the app has no icon this size, the shell hands over a
+    // bigger one as is, instead of stretching one with a cheap filter. We shrink it well.
+    let image = get(SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)
         .inspect_err(|err| log!("no icon for {target} ({source}): {err}"))
-        .ok()
+        .ok()?;
+    let pixels = sharpen(image, size, target)
+        // Smaller than asked for, or unreadable: let the shell stretch it after all.
+        .or_else(|| sharpen(get(SIIGBF_ICONONLY).ok()?, size, target))?;
+    Some(pixels.into())
+}
+
+/// Reads `image`, converts it to premultiplied alpha (what Direct2D expects) and
+/// shrinks it to `size` × `size`. `image` is deleted. `None` if it can't be read or is
+/// smaller than `size`.
+fn sharpen(image: HBITMAP, size: i32, target: &str) -> Option<Vec<u8>> {
+    let result = read_pixels(image).and_then(|(mut pixels, w, h)| {
+        if w < size || h < size {
+            return None;
+        }
+        let kind = pixels::alpha_kind(&pixels);
+        log!("icon for {target}: {w}x{h} ({kind:?} alpha), drawn at {size}x{size}");
+        pixels::premultiply(&mut pixels, &kind);
+        let (w, h, size) = (w as usize, h as usize, size as usize);
+        Some(pixels::shrink(&pixels, w, h, size, size))
+    });
+    let _ = unsafe { DeleteObject(image.into()) };
+    result
+}
+
+/// A 32-bit, rows-top-to-bottom description of a `w` × `h` image, for `GetDIBits`.
+fn info(w: i32, h: i32) -> BITMAPINFO {
+    BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h, // negative: top row first
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+/// `bitmap`'s pixels (blue, green, red, alpha; top row first), width and height.
+fn read_pixels(bitmap: HBITMAP) -> Option<(Vec<u8>, i32, i32)> {
+    let mut header = BITMAP::default();
+    let got = unsafe {
+        GetObjectW(
+            bitmap.into(),
+            size_of::<BITMAP>() as i32,
+            Some((&mut header as *mut BITMAP).cast()),
+        )
+    };
+    let (w, h) = (header.bmWidth, header.bmHeight.abs());
+    if got == 0 || w <= 0 || h <= 0 {
+        return None;
+    }
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    let mut info = info(w, h);
+    let lines = unsafe {
+        let dc = CreateCompatibleDC(None);
+        // Copies the pixels out in the layout `info` asks for, whatever the bitmap's own.
+        let lines = GetDIBits(
+            dc,
+            bitmap,
+            0,
+            h as u32,
+            Some(pixels.as_mut_ptr().cast()),
+            &mut info,
+            DIB_RGB_COLORS,
+        );
+        let _ = DeleteDC(dc);
+        lines
+    };
+    (lines == h).then_some((pixels, w, h))
 }
 
 /// What to ask the shell for an icon: paths and `shell:` locations as they are; links

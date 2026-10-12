@@ -5,6 +5,7 @@
 use std::cell::{Cell, RefCell};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
     DeleteObject, EndPaint, HMONITOR, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject,
@@ -26,7 +27,7 @@ use windows::core::{HSTRING, w};
 
 use crate::config::Favorite;
 use crate::launcher_draw::{self, BACKGROUND, PADDING, ROW_HEIGHT, SEARCH_HEIGHT, View, WIDTH};
-use crate::{search, settings, tiler};
+use crate::{search, settings, style, tiler};
 
 /// What the launcher shows while it's open.
 #[derive(Default)]
@@ -105,6 +106,8 @@ pub fn create() -> windows::core::Result<()> {
             None,
         )?
     };
+    // Windows 11 rounds the corners and draws a thin outline and a shadow, smoothly.
+    style::set(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND.0);
     WINDOW.set(Some(hwnd));
     Ok(())
 }

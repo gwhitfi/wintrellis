@@ -7,6 +7,7 @@ use std::sync::{RwLock, RwLockReadGuard};
 
 use crate::config::{self, Combo, Config, Favorite};
 use crate::keyboard::Command;
+use crate::theme::Theme;
 
 static CURRENT: RwLock<Config> = RwLock::new(Config {
     bindings: Vec::new(),
@@ -23,6 +24,7 @@ static CURRENT: RwLock<Config> = RwLock::new(Config {
     bar_margin: 6,
     bar_padding: 6,
     bar_gap: 8,
+    theme: None,
 });
 
 pub fn path() -> PathBuf {
@@ -137,4 +139,8 @@ pub fn bar_padding() -> i32 {
 
 pub fn bar_gap() -> i32 {
     read().bar_gap
+}
+
+pub fn theme() -> Option<Theme> {
+    read().theme
 }
