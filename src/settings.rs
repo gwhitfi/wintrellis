@@ -7,7 +7,7 @@ use std::sync::{RwLock, RwLockReadGuard};
 
 use crate::config::{self, Combo, Config, Favorite};
 use crate::keyboard::Command;
-use crate::theme::Theme;
+use crate::theme::{self, Theme};
 
 static CURRENT: RwLock<Config> = RwLock::new(Config {
     bindings: Vec::new(),
@@ -141,6 +141,11 @@ pub fn bar_gap() -> i32 {
     read().bar_gap
 }
 
-pub fn theme() -> Option<Theme> {
-    read().theme
+/// The colors to draw with: the `theme` setting's, or the built-in look with
+/// `border_color` as the accent.
+pub fn colors() -> Theme {
+    let config = read();
+    config
+        .theme
+        .unwrap_or_else(|| theme::built_in(config.border_color))
 }

@@ -24,7 +24,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, Result, w};
 
 use crate::layout::{self, Rect};
-use crate::theme::Theme;
 use crate::{canvas, settings, tiler, tracker};
 
 // Sizes in pixels at 100% scaling.
@@ -37,11 +36,6 @@ const BUBBLE_H: i32 = 16;
 const RING_GAP: i32 = 1;
 const LINE: i32 = 2;
 const FONT: i32 = 11;
-
-// Colors without a `theme` setting, as 0x00BBGGRR. Close to Windows 11's dark theme,
-// like the launcher; the accent is `border_color`.
-const BACKGROUND: u32 = 0x001F_1F1F;
-const EMPTY: u32 = 0x0080_8080;
 
 /// One monitor's bar.
 #[derive(Clone, Copy)]
@@ -239,7 +233,7 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
     let (current, occupied) = tracker::workspace_summary(monitor);
     let scale = scaler(monitor);
     let px = |size: i32| scale(size) as f32;
-    let colors = colors();
+    let colors = settings::colors();
     let accent = COLORREF(colors.accent);
     unsafe {
         let brush = |c: COLORREF| target.CreateSolidColorBrush(&canvas::color(c, 1.0), None);
@@ -293,15 +287,6 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// The `theme` setting's colors, or the built-in ones.
-fn colors() -> Theme {
-    settings::theme().unwrap_or(Theme {
-        background: BACKGROUND,
-        muted: EMPTY,
-        accent: settings::border_color(),
-    })
 }
 
 /// `r` as a pill (both ends fully round), grown by `by` pixels on every side (negative

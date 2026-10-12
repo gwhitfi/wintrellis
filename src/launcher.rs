@@ -7,8 +7,8 @@ use std::cell::{Cell, RefCell};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateSolidBrush, DeleteDC,
-    DeleteObject, EndPaint, HMONITOR, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject,
+    BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+    EndPaint, HMONITOR, InvalidateRect, PAINTSTRUCT, SRCCOPY, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, w};
 
 use crate::config::Favorite;
-use crate::launcher_draw::{self, BACKGROUND, PADDING, ROW_HEIGHT, SEARCH_HEIGHT, View, WIDTH};
+use crate::launcher_draw::{self, PADDING, ROW_HEIGHT, SEARCH_HEIGHT, View, WIDTH};
 use crate::{search, settings, style, tiler};
 
 /// What the launcher shows while it's open.
@@ -83,8 +83,7 @@ pub fn create() -> windows::core::Result<()> {
         hInstance: instance.into(),
         lpszClassName: w!("WinTrellis-launcher"),
         hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }?,
-        // Windows fills the window with this before it's painted.
-        hbrBackground: unsafe { CreateSolidBrush(BACKGROUND) },
+        // No background brush: WM_ERASEBKGND is skipped, `paint` covers every pixel.
         ..Default::default()
     };
     let hwnd = unsafe {

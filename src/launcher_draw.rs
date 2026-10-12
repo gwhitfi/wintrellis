@@ -32,13 +32,6 @@ const ICON_SIZE: i32 = 32;
 const SEARCH_FONT: i32 = 18;
 const ROW_FONT: i32 = 15;
 
-// Colors, as 0x00BBGGRR. Close to Windows 11's dark theme.
-pub const BACKGROUND: COLORREF = COLORREF(0x0020_2020);
-const SEARCH_BOX: COLORREF = COLORREF(0x002C_2C2C);
-const SELECTED_ROW: COLORREF = COLORREF(0x0035_3535);
-const TEXT: COLORREF = COLORREF(0x00FF_FFFF);
-const DIM_TEXT: COLORREF = COLORREF(0x009A_9A9A);
-
 /// What's on screen.
 pub struct View<'a> {
     pub query: &'a str,
@@ -70,10 +63,12 @@ pub fn draw(dc: HDC, width: i32, height: i32, dpi: i32, view: &View) -> POINT {
 /// Draws everything. Returns where the text cursor goes.
 fn draw_view(target: &ID2D1RenderTarget, width: i32, dpi: i32, view: &View) -> Result<POINT> {
     let s = |px: i32| px * dpi / 96;
-    let brush = |c: COLORREF| unsafe { target.CreateSolidColorBrush(&canvas::color(c, 1.0), None) };
-    let accent = brush(COLORREF(settings::border_color()))?;
-    let (text_brush, dim) = (brush(TEXT)?, brush(DIM_TEXT)?);
-    unsafe { target.Clear(Some(&canvas::color(BACKGROUND, 1.0))) };
+    let colors = settings::colors();
+    let brush =
+        |c: u32| unsafe { target.CreateSolidColorBrush(&canvas::color(COLORREF(c), 1.0), None) };
+    let accent = brush(colors.accent)?;
+    let (text_brush, dim) = (brush(colors.text)?, brush(colors.muted)?);
+    unsafe { target.Clear(Some(&canvas::color(COLORREF(colors.background), 1.0))) };
 
     // Search box, with an accent line along its bottom like Windows 11's text boxes:
     // the box's own rounded shape, drawn in the accent but only its bottom 2 pixels.
@@ -88,7 +83,7 @@ fn draw_view(target: &ID2D1RenderTarget, width: i32, dpi: i32, view: &View) -> R
         ..search
     };
     unsafe {
-        target.FillRoundedRectangle(&rounded(search, s(6)), &brush(SEARCH_BOX)?);
+        target.FillRoundedRectangle(&rounded(search, s(6)), &brush(colors.surface)?);
         target.PushAxisAlignedClip(&rect_f(line), D2D1_ANTIALIAS_MODE_ALIASED);
         target.FillRoundedRectangle(&rounded(search, s(6)), &accent);
         target.PopAxisAlignedClip();
@@ -113,7 +108,7 @@ fn draw_view(target: &ID2D1RenderTarget, width: i32, dpi: i32, view: &View) -> R
 
     // App rows.
     let format = one_line_format(s(ROW_FONT))?;
-    let selected_row = brush(SELECTED_ROW)?;
+    let selected_row = brush(colors.highlight)?;
     let icon_size = s(ICON_SIZE);
     let mut top = s(PADDING + SEARCH_HEIGHT);
     for (i, app) in view.rows.iter().enumerate() {
