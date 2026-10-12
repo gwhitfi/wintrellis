@@ -4,7 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
@@ -15,7 +15,9 @@ use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP,
 };
-use windows::Win32::UI::Shell::ShellExecuteW;
+use windows::Win32::UI::Shell::{
+    SEE_MASK_HMONITOR, SHELLEXECUTEINFOW, SHELLEXECUTEINFOW_0, ShellExecuteExW, ShellExecuteW,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateCaret, CreateWindowExW, DefWindowProcW, DestroyCaret, GetClientRect, GetForegroundWindow,
     HWND_TOPMOST, IDC_ARROW, IsWindowVisible, LoadCursorW, RegisterClassW, SW_HIDE, SW_SHOWNORMAL,
@@ -23,7 +25,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WA_INACTIVE, WM_ACTIVATE, WM_CHAR, WM_ERASEBKGND, WM_KEYDOWN, WM_KILLFOCUS, WM_PAINT,
     WM_SETFOCUS, WNDCLASSW, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
-use windows::core::{HSTRING, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 use crate::config::Favorite;
 use crate::launcher_draw::{self, PADDING, ROW_HEIGHT, SEARCH_HEIGHT, View, WIDTH};
@@ -320,7 +322,27 @@ pub fn launch(index: usize) {
 
 /// Opens it the way the Run dialog (Win+R) does, so programs, paths, links like
 /// `steam://` and `shell:AppsFolder\...` Store apps all work.
-fn open(target: &str) {
+/// Opens `target` asking Windows to put it on `monitor` (where the click was), not
+/// wherever the app or Windows would pick. Apps may still choose their own spot.
+pub fn open_on(target: &str, monitor: HMONITOR) {
+    let file = HSTRING::from(target);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_HMONITOR,
+        lpVerb: w!("open"),
+        lpFile: PCWSTR(file.as_ptr()),
+        nShow: SW_SHOWNORMAL.0,
+        Anonymous: SHELLEXECUTEINFOW_0 {
+            hMonitor: HANDLE(monitor.0),
+        },
+        ..Default::default()
+    };
+    if let Err(err) = unsafe { ShellExecuteExW(&mut info) } {
+        log!("couldn't open {target}: {err}");
+    }
+}
+
+pub fn open(target: &str) {
     let result = unsafe {
         ShellExecuteW(
             None,

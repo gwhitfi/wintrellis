@@ -8,7 +8,7 @@ use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{PostThreadMessageW, WM_QUIT};
 use windows::core::BOOL;
 
-use crate::{border, hidden, snap, tracker, tray};
+use crate::{border, hidden, snap, tracker, tray, volume};
 
 /// The thread running the message loop, which must do the cleanup.
 static MAIN_THREAD: AtomicU32 = AtomicU32::new(0);
@@ -40,5 +40,6 @@ pub fn cleanup() {
     tracker::release_all();
     snap::restore();
     tray::remove();
+    volume::stop();
     log!("Stopped.");
 }

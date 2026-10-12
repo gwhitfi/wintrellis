@@ -30,6 +30,7 @@ mod tiler;
 mod tracker;
 mod transparency;
 mod tray;
+mod volume;
 mod window;
 
 use std::process::Command;
@@ -56,14 +57,19 @@ fn main() {
     }
     overlay::create().unwrap();
     launcher::create().unwrap();
-    // Nice to have: WinTrellis works without it.
+    // Created early: WinTrellis posts its notes to itself (retile, volume) to it.
+    let display_listener = display::create_listener().unwrap();
+    // Nice to haves: WinTrellis works without them. Volume first, so the bar's first
+    // drawing already shows it.
+    if let Err(err) = volume::start(display_listener) {
+        log!("couldn't read the volume: {err}");
+    }
     if let Err(err) = bar::create() {
         log!("couldn't create the workspace bar: {err}");
     }
     let _events = tracker::start();
     keyboard::start_hook_thread(unsafe { GetCurrentThreadId() });
     shutdown::install().unwrap();
-    let display_listener = display::create_listener().unwrap();
     tray::add(display_listener);
     snap::disable();
     log!("WinTrellis running. SUPER+T opens the launcher. SUPER+Esc or Ctrl+C quits.");
@@ -77,6 +83,7 @@ fn main() {
                 }
             }
             WM_LAUNCH => launcher::launch(msg.wParam.0),
+            // Startup only: before the listener window exists, retiles go to the thread.
             tracker::WM_RETILE => tracker::retile(),
             // Messages addressed to a window (display listener, launcher) go to its
             // handler. TranslateMessage turns key presses into WM_CHAR (typed text).

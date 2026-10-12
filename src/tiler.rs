@@ -159,7 +159,12 @@ fn move_windows(moves: &[(HWND, Rect)]) {
 
 /// Centers a window on its monitor (keeping its size), e.g. when it starts floating.
 pub fn center(hwnd: HWND) {
-    if let Some(area) = tiling_area(monitor_of(hwnd))
+    center_on(hwnd, monitor_of(hwnd));
+}
+
+/// Centers a window on `monitor` (keeping its size), moving it there if it's elsewhere.
+pub fn center_on(hwnd: HWND, monitor: HMONITOR) {
+    if let Some(area) = tiling_area(monitor)
         && let Some(slot) = centered_slot(hwnd, area)
     {
         move_windows(&[(hwnd, outer_rect(hwnd, slot))]);

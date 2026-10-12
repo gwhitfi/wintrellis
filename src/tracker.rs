@@ -13,7 +13,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::layout::{self, Direction, Splits};
-use crate::{bar, border, hidden, style, tiler, window};
+use crate::{bar, border, display, hidden, style, tiler, window};
 
 /// Posted to the message loop when the managed list changed and windows need moving.
 pub const WM_RETILE: u32 = WM_APP + 2;
@@ -64,6 +64,10 @@ thread_local! {
     /// hands focus to some window, often on another monitor; that one automatic jump is
     /// ignored, so workspace hotkeys stay on the empty monitor.
     static KEPT: Cell<Option<(HMONITOR, u32)>> = const { Cell::new(None) };
+
+    /// A monitor the next new window should be moved to, and when that was asked (see
+    /// `put_next_window_on`).
+    static PLACE_NEXT: Cell<Option<(HMONITOR, u32)>> = const { Cell::new(None) };
 
     /// The window being dragged/resized with the mouse, and the monitor it started on.
     static DRAG_START: Cell<Option<(HWND, HMONITOR)>> = const { Cell::new(None) };
@@ -339,6 +343,16 @@ pub fn switch_workspace_on(monitor: HMONITOR, n: u8) {
     request_retile();
 }
 
+/// How long `put_next_window_on` waits for the window to appear.
+const PLACE_NEXT_MS: u32 = 5000;
+
+/// The next window that appears within `PLACE_NEXT_MS` is moved to `monitor` before
+/// it's tiled, so it's tiled there. For apps that open where they like, ignoring where
+/// they're asked to (Settings reopens wherever it was last).
+pub fn put_next_window_on(monitor: HMONITOR) {
+    PLACE_NEXT.set(Some((monitor, unsafe { GetTickCount() })));
+}
+
 /// How long after keeping a monitor (see `KEPT`) a focus jump to another monitor is
 /// taken as Windows' automatic one, not the user's.
 const KEEP_MS: u32 = 500;
@@ -498,10 +512,13 @@ pub fn toggle_floating() {
 }
 
 /// Retiling happens later in the message loop, not inside the event callback, so moving
-/// windows can't re-enter the callback while `MANAGED` is borrowed.
+/// windows can't re-enter the callback while `MANAGED` is borrowed. The note goes to
+/// the listener window (see `display.rs`): a note to the thread can be thrown away by
+/// another message loop, and then `RETILE_PENDING` would stay set and nothing would
+/// ever be retiled again. Before the listener exists (startup), to the thread.
 fn request_retile() {
     if !RETILE_PENDING.replace(true) {
-        let _ = unsafe { PostMessageW(None, WM_RETILE, WPARAM(0), LPARAM(0)) };
+        let _ = unsafe { PostMessageW(display::listener(), WM_RETILE, WPARAM(0), LPARAM(0)) };
     }
 }
 
@@ -631,6 +648,13 @@ fn dropped(hwnd: HWND) {
 }
 
 fn add(hwnd: HWND) {
+    if !is_managed(hwnd)
+        && let Some((monitor, at)) = PLACE_NEXT.take()
+        && unsafe { GetTickCount() }.wrapping_sub(at) < PLACE_NEXT_MS
+        && tiler::monitor_of(hwnd) != monitor
+    {
+        tiler::center_on(hwnd, monitor);
+    }
     // New windows join the workspace their monitor is showing.
     let workspace = active_workspace(tiler::monitor_of(hwnd));
     MANAGED.with_borrow_mut(|managed| {

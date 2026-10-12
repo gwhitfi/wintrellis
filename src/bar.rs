@@ -1,8 +1,10 @@
 //! The workspace bar: a small pill at the top center of each monitor with one numbered
-//! bubble per workspace, then a clock. Filled = the workspace has windows, outlined =
+//! bubble per workspace, then the speaker volume and a clock. Filled = the workspace has windows, outlined =
 //! empty, ringed = the one showing; clicking a bubble switches to its workspace. Always
 //! shown: the band it sits in is kept free of windows (see `reserved_height`). Hovering
-//! the clock shows the date in a small tooltip under it.
+//! the clock shows the date in a small tooltip under it, hovering the volume its level;
+//! scrolling over the volume changes it, clicking opens Windows' sound output panel and
+//! right-clicking Sound settings.
 
 use std::cell::{Cell, RefCell};
 
@@ -20,24 +22,29 @@ use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VIRTUAL_KEY, VK_LCONTROL, VK_LWIN,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, HWND_TOPMOST, IDC_ARROW, LoadCursorW,
     RegisterClassW, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SWP_SHOWWINDOW, SetTimer, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WM_LBUTTONDOWN,
-    WM_MOUSEMOVE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONUP, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
 use windows::core::{BOOL, PCWSTR, Result, w};
 
 use crate::layout::{self, Rect};
-use crate::{canvas, settings, tiler, tracker};
+use crate::{canvas, keyboard, launcher, settings, tiler, tracker, volume};
 
 // Sizes in pixels at 100% scaling.
 /// Each workspace's pill. Every cell in the bar is this tall.
 const BUBBLE_W: i32 = 34;
 const BUBBLE_H: i32 = 16;
-/// The clock's cell, after the bubbles: room for "12:59 PM".
+/// The volume icon's cell, after the bubbles, and the icon's size.
+const VOLUME_W: i32 = 20;
+const ICON_SIZE: i32 = 13;
+/// The clock's cell, after the volume: room for "12:59 PM".
 const CLOCK_W: i32 = 54;
 /// The date tooltip under the clock: its height, the space either side of the date,
 /// and how far below the bar it sits.
@@ -53,6 +60,11 @@ const FONT: i32 = 11;
 /// How far the soft shadow around the bar reaches. The window is this much bigger than
 /// the bar on every side, to make room for it.
 const SHADOW: i32 = 6;
+
+/// Which of a bar's cells (see `cells`) are the volume icon and the clock; the ones
+/// before them are the workspace bubbles.
+const VOLUME: usize = tracker::WORKSPACES;
+const CLOCK: usize = VOLUME + 1;
 
 /// How dark the shadow is right next to the bar (0.0 none .. 1.0 black); it fades out
 /// from there.
@@ -83,8 +95,9 @@ thread_local! {
     /// The date tooltip: one window, moved under whichever clock is hovered.
     static TIP: Cell<Option<HWND>> = const { Cell::new(None) };
 
-    /// The bar whose clock the mouse is over, if any.
-    static HOVERED: Cell<Option<HWND>> = const { Cell::new(None) };
+    /// The bar and the cell (`VOLUME` or `CLOCK`) the mouse is over, if any: the
+    /// tooltip shows that cell's text.
+    static HOVERED: Cell<Option<(HWND, usize)>> = const { Cell::new(None) };
 }
 
 /// Registers the window classes, then creates the bars (if the `workspace_bar`
@@ -184,6 +197,12 @@ pub fn refresh() {
     for b in BARS.with_borrow(|bars| bars.clone()) {
         redraw(&b);
     }
+    // A shown tooltip may be out of date too (e.g. the volume while scrolling).
+    if let Some((bar, cell)) = HOVERED.get()
+        && let Some(b) = find(bar)
+    {
+        tip_or_log(&b, cell);
+    }
 }
 
 /// How many pixels at the top of `monitor` the bar keeps for itself (0 if it's off),
@@ -211,9 +230,11 @@ fn size(scale: &impl Fn(i32) -> i32) -> (i32, i32) {
     )
 }
 
-/// The width of each of the bar's cells: one per workspace, then the clock.
+/// The width of each of the bar's cells: one per workspace, then the volume and the
+/// clock.
 fn widths(scale: &impl Fn(i32) -> i32) -> Vec<i32> {
     let mut widths = vec![scale(BUBBLE_W); tracker::WORKSPACES];
+    widths.push(scale(VOLUME_W));
     widths.push(scale(CLOCK_W));
     widths
 }
@@ -277,6 +298,8 @@ unsafe extern "system" fn on_bar_message(
     // No WM_PAINT: a window shown with UpdateLayeredWindow keeps the image it was given.
     match msg {
         WM_LBUTTONDOWN => clicked(hwnd, lparam),
+        WM_RBUTTONUP => right_clicked(hwnd, lparam),
+        WM_MOUSEWHEEL if scrolled(hwnd, wparam, lparam) => {}
         WM_MOUSEMOVE => hover(hwnd, lparam),
         // Asked for by `hover` (TrackMouseEvent): the mouse left the bar.
         WM_MOUSELEAVE => unhover(),
@@ -289,38 +312,72 @@ unsafe extern "system" fn on_bar_message(
     LRESULT(0)
 }
 
-/// A click on `bar`: switches its monitor to the workspace whose bubble was hit.
+/// A click on `bar`: a bubble switches its monitor to that workspace; the volume opens
+/// Windows' sound output panel (Quick Settings).
 fn clicked(bar: HWND, lparam: LPARAM) {
-    let Some(b) = find(bar) else {
+    let Some((b, cell)) = cell_at(bar, mouse_position(lparam)) else {
         return;
     };
-    let (x, y) = mouse_position(lparam);
-    // Only the workspace bubbles do something when clicked.
-    if let Some(i) = layout::rect_at(&cells(&scaler(b.monitor)), x, y)
-        && i < tracker::WORKSPACES
-    {
-        tracker::switch_workspace_on(b.monitor, i as u8 + 1);
+    if cell < tracker::WORKSPACES {
+        tracker::switch_workspace_on(b.monitor, cell as u8 + 1);
+    } else if cell == VOLUME {
+        // Win+Ctrl+V: Quick Settings, opened on its sound output page (device picker
+        // and per-app volume). Windows offers no supported way to open it directly.
+        keyboard::press_shortcut(&[VK_LWIN, VK_LCONTROL, VIRTUAL_KEY(b'V'.into())]);
     }
+}
+
+/// A right-click on `bar`: the volume opens Windows' Sound settings.
+fn right_clicked(bar: HWND, lparam: LPARAM) {
+    if let Some((b, VOLUME)) = cell_at(bar, mouse_position(lparam)) {
+        // On this bar's monitor, not wherever Settings was last. Settings ignores the
+        // request in `open_on`, so its window is also moved here when it appears.
+        tracker::put_next_window_on(b.monitor);
+        launcher::open_on("ms-settings:sound", b.monitor);
+    }
+}
+
+/// The mouse wheel turned over `bar`: over the volume, changes it 2% per notch (the
+/// step Windows' own slider uses). Returns whether it was used.
+fn scrolled(bar: HWND, wparam: WPARAM, lparam: LPARAM) -> bool {
+    let Some(b) = find(bar) else {
+        return false;
+    };
+    // For the wheel, lParam is a position on the screen, not in the window.
+    let (x, y) = mouse_position(lparam);
+    let inside = (x - b.rect.x, y - b.rect.y);
+    if !matches!(cell_at(bar, inside), Some((_, VOLUME))) {
+        return false;
+    }
+    // The high 16 bits of wParam: how far it turned, 120 per notch, positive = away
+    // from you (up).
+    let turned = f32::from((wparam.0 >> 16) as u16 as i16) / 120.0;
+    volume::change(turned * 0.02);
+    true
+}
+
+/// The bar whose window is `bar`, and which of its cells (see `cells`) `position` (in
+/// the window) is in.
+fn cell_at(bar: HWND, (x, y): (i32, i32)) -> Option<(Bar, usize)> {
+    let b = find(bar)?;
+    let cell = layout::rect_at(&cells(&scaler(b.monitor)), x, y)?;
+    Some((b, cell))
 }
 
 /// The mouse moved over `bar`: shows the date tooltip when it's over the clock, and
 /// hides it when it moves off.
 fn hover(bar: HWND, lparam: LPARAM) {
-    let Some(b) = find(bar) else {
-        return;
-    };
-    let (x, y) = mouse_position(lparam);
-    let clock = cells(&scaler(b.monitor))[tracker::WORKSPACES];
-    let over_clock = layout::rect_at(&[clock], x, y).is_some();
-    // Mouse moves arrive constantly; act only when it crosses the clock's edge.
-    if over_clock == (HOVERED.get() == Some(bar)) {
+    let over =
+        cell_at(bar, mouse_position(lparam)).filter(|&(_, cell)| cell == VOLUME || cell == CLOCK);
+    // Mouse moves arrive constantly; act only when the mouse moves to another cell.
+    if over.map(|(_, cell)| (bar, cell)) == HOVERED.get() {
         return;
     }
-    if !over_clock {
+    let Some((b, cell)) = over else {
         unhover();
         return;
-    }
-    HOVERED.set(Some(bar));
+    };
+    HOVERED.set(Some((bar, cell)));
     // Windows doesn't say when the mouse leaves a window unless asked, once per visit.
     let mut track = TRACKMOUSEEVENT {
         cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
@@ -329,12 +386,17 @@ fn hover(bar: HWND, lparam: LPARAM) {
         dwHoverTime: 0,
     };
     let _ = unsafe { TrackMouseEvent(&mut track) };
-    if let Err(err) = show_tip(&b, clock) {
-        log!("couldn't show the date: {err}");
+    tip_or_log(&b, cell);
+}
+
+/// `show_tip`, logging a failure.
+fn tip_or_log(b: &Bar, cell: usize) {
+    if let Err(err) = show_tip(b, cell) {
+        log!("couldn't show the tooltip: {err}");
     }
 }
 
-/// Hides the date tooltip.
+/// Hides the tooltip.
 fn unhover() {
     HOVERED.set(None);
     if let Some(tip) = TIP.get() {
@@ -342,29 +404,36 @@ fn unhover() {
     }
 }
 
-/// Shows today's date in the tooltip, centered under `clock` (in `b`'s window).
-fn show_tip(b: &Bar, clock: Rect) -> Result<()> {
-    let (Some(tip), Some(date)) = (TIP.get(), date_text()) else {
+/// Shows the tooltip for `cell` of `b` centered under it: today's date for the clock,
+/// the level for the volume.
+fn show_tip(b: &Bar, cell: usize) -> Result<()> {
+    let text = if cell == CLOCK {
+        date_text()
+    } else {
+        Some(volume_text(volume::level()))
+    };
+    let (Some(tip), Some(text)) = (TIP.get(), text) else {
         return Ok(());
     };
     let scale = scaler(b.monitor);
+    let under = cells(&scale)[cell];
     let format = canvas::text_format(scale(FONT) as f32, DWRITE_FONT_WEIGHT_SEMI_BOLD)?;
     // Never wrapped onto more lines, whatever the measurement says.
     canvas::one_line(&format)?;
-    // Just wide enough for the date, plus room for the shadow, like the bar.
-    let text_w = canvas::text_width(&date, &format)?.ceil() as i32;
+    // Just wide enough for the text, plus room for the shadow, like the bar.
+    let text_w = canvas::text_width(&text, &format)?.ceil() as i32;
     let shadow = scale(SHADOW);
     let w = text_w + 2 * scale(TIP_PADDING) + 2 * shadow;
     let h = scale(TIP_H) + 2 * shadow;
     let bar_bottom = b.rect.y + b.rect.h - shadow;
     let at = Rect {
-        x: b.rect.x + clock.x + clock.w / 2 - w / 2,
+        x: b.rect.x + under.x + under.w / 2 - w / 2,
         y: bar_bottom + scale(TIP_GAP) - shadow,
         w,
         h,
     };
     canvas::show(tip, at, |target| {
-        draw_tip(target, &date, &format, at, shadow)
+        draw_tip(target, &text, &format, at, shadow)
     })?;
     unsafe {
         // On top of the bar and everything else, without taking focus.
@@ -380,10 +449,10 @@ fn show_tip(b: &Bar, clock: Rect) -> Result<()> {
     }
 }
 
-/// The tooltip: a pill like the bar, with its shadow, and `date` in the middle.
+/// The tooltip: a pill like the bar, with its shadow, and `text` in the middle.
 fn draw_tip(
     target: &ID2D1RenderTarget,
-    date: &str,
+    text: &str,
     format: &IDWriteTextFormat,
     at: Rect,
     shadow: i32,
@@ -396,20 +465,20 @@ fn draw_tip(
         h: at.h - 2 * shadow,
     };
     draw_shadow(target, body, shadow)?;
-    let wide: Vec<u16> = date.encode_utf16().collect();
+    let wide: Vec<u16> = text.encode_utf16().collect();
     unsafe {
         let background = target.CreateSolidColorBrush(
             &canvas::color(COLORREF(colors.background), BACKGROUND_ALPHA),
             None,
         )?;
-        let text =
+        let text_brush =
             target.CreateSolidColorBrush(&canvas::color(COLORREF(colors.text), 1.0), None)?;
         target.FillRoundedRectangle(&pill(body, 0.0), &background);
         target.DrawText(
             &wide,
             format,
             &rect_f(body),
-            &text,
+            &text_brush,
             D2D1_DRAW_TEXT_OPTIONS_NONE,
             DWRITE_MEASURING_MODE_NATURAL,
         );
@@ -526,7 +595,8 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
 
         let line = px(LINE);
         let cells = cells(&scale);
-        let (bubbles, clock) = (&cells[..tracker::WORKSPACES], cells[tracker::WORKSPACES]);
+        let bubbles = &cells[..tracker::WORKSPACES];
+        let (volume, clock) = (cells[VOLUME], cells[CLOCK]);
         for (i, &b) in bubbles.iter().enumerate() {
             let number_brush = if occupied[i] {
                 target.FillRoundedRectangle(&pill(b, 0.0), &accent_brush);
@@ -555,9 +625,9 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
             );
         }
 
-        // A thin divider halfway between the last bubble and the clock.
+        // A thin divider halfway between the last bubble and the volume.
         let last = bubbles[bubbles.len() - 1];
-        let divider = ((last.x + last.w + clock.x) / 2) as f32;
+        let divider = ((last.x + last.w + volume.x) / 2) as f32;
         target.FillRectangle(
             &D2D_RECT_F {
                 left: divider,
@@ -567,6 +637,22 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
             },
             &empty,
         );
+        // The volume icon: muted (or no output device) in the quiet color.
+        let level = volume::level();
+        let icon: Vec<u16> = volume_icon(level).encode_utf16(&mut [0; 2]).to_vec();
+        let icon_brush = match level {
+            Some((_, false)) => brush(COLORREF(colors.text))?,
+            _ => brush(COLORREF(colors.muted))?,
+        };
+        target.DrawText(
+            &icon,
+            &canvas::icon_format(px(ICON_SIZE))?,
+            &rect_f(volume),
+            &icon_brush,
+            D2D1_DRAW_TEXT_OPTIONS_NONE,
+            DWRITE_MEASURING_MODE_NATURAL,
+        );
+
         let now = GetLocalTime();
         let time: Vec<u16> = time_text(now.wHour, now.wMinute).encode_utf16().collect();
         target.DrawText(
@@ -579,6 +665,27 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// The volume tooltip's text: "45%", "Muted", or "No output device".
+fn volume_text(level: Option<(f32, bool)>) -> String {
+    match level {
+        Some((level, false)) => format!("{}%", (level * 100.0).round()),
+        Some((_, true)) => "Muted".to_string(),
+        None => "No output device".to_string(),
+    }
+}
+
+/// The icon (a character in Windows 11's icon font) for the volume: a speaker with
+/// 0–3 sound waves by level, or crossed out when muted or there's no output device.
+fn volume_icon(level: Option<(f32, bool)>) -> char {
+    match level {
+        Some((level, false)) if level >= 0.67 => '\u{E995}', // three waves
+        Some((level, false)) if level >= 0.34 => '\u{E994}', // two
+        Some((level, false)) if level > 0.0 => '\u{E993}',   // one
+        Some((_, false)) => '\u{E992}',                      // none: volume at 0
+        _ => '\u{E74F}',                                     // muted
+    }
 }
 
 /// The clock's text: 12-hour "h:mm AM" (no leading zero on the hour).
@@ -644,6 +751,24 @@ fn text_on(background: COLORREF) -> COLORREF {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_text_shows_percent_or_why_not() {
+        assert_eq!(volume_text(Some((0.45, false))), "45%");
+        assert_eq!(volume_text(Some((1.0, false))), "100%");
+        assert_eq!(volume_text(Some((0.45, true))), "Muted");
+        assert_eq!(volume_text(None), "No output device");
+    }
+
+    #[test]
+    fn volume_icon_follows_level_and_mute() {
+        assert_eq!(volume_icon(Some((1.0, false))), '\u{E995}');
+        assert_eq!(volume_icon(Some((0.5, false))), '\u{E994}');
+        assert_eq!(volume_icon(Some((0.1, false))), '\u{E993}');
+        assert_eq!(volume_icon(Some((0.0, false))), '\u{E992}');
+        assert_eq!(volume_icon(Some((0.8, true))), '\u{E74F}'); // muted
+        assert_eq!(volume_icon(None), '\u{E74F}'); // no output device
+    }
 
     #[test]
     fn time_is_12_hour_with_am_pm() {

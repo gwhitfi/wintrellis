@@ -380,4 +380,5 @@ dependencies = [
  "serde",
  "toml",
  "windows",
+ "windows-core",
 ]

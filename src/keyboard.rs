@@ -4,8 +4,9 @@ use std::thread;
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-    VIRTUAL_KEY, VK_LCONTROL, VK_LSHIFT, VK_LWIN, VK_RCONTROL, VK_RSHIFT, VK_RWIN,
+    GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
+    KEYEVENTF_KEYUP, SendInput, VIRTUAL_KEY, VK_CONTROL, VK_LCONTROL, VK_LSHIFT, VK_LWIN,
+    VK_RCONTROL, VK_RSHIFT, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, LLKHF_INJECTED, MSG,
@@ -163,6 +164,19 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             false
         };
 
+        let is_modifier = [
+            VK_LWIN,
+            VK_RWIN,
+            VK_LSHIFT,
+            VK_RSHIFT,
+            VK_LCONTROL,
+            VK_RCONTROL,
+        ]
+        .contains(&vk);
+        if key_down && !is_modifier {
+            resync_modifiers();
+        }
+
         if vk == VK_LWIN || vk == VK_RWIN {
             // Track SUPER, but let Windows see it too.
             SUPER_DOWN.store(key_down, Ordering::Relaxed);
@@ -193,6 +207,29 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Presses `keys` together, as if typed (in order down, then up in reverse): e.g.
+/// Win+Ctrl+V to open Windows' sound output panel. Our own hook ignores these (they're
+/// marked injected), so they reach Windows even if the combination is bound.
+pub fn press_shortcut(keys: &[VIRTUAL_KEY]) {
+    let downs = keys.iter().map(|&vk| key_input(vk, KEYBD_EVENT_FLAGS(0)));
+    let ups = keys.iter().rev().map(|&vk| key_input(vk, KEYEVENTF_KEYUP));
+    let inputs: Vec<INPUT> = downs.chain(ups).collect();
+    unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+}
+
+/// Sets the modifier flags from Windows' own record of which keys are down. Our flags
+/// can go stale: while an app running as administrator (Task Manager) has focus, its
+/// keystrokes never reach this hook, so a modifier released then (e.g. after
+/// Ctrl+Shift+Esc) would stay "held" here, and every hotkey after it would look like it
+/// had Ctrl+Shift too. Called before each ordinary key press; it's a quick lookup.
+fn resync_modifiers() {
+    // The top bit of GetAsyncKeyState's result (a negative number) means "down now".
+    let down = |vk: VIRTUAL_KEY| unsafe { GetAsyncKeyState(i32::from(vk.0)) } < 0;
+    SUPER_DOWN.store(down(VK_LWIN) || down(VK_RWIN), Ordering::Relaxed);
+    SHIFT_DOWN.store(down(VK_SHIFT), Ordering::Relaxed);
+    CTRL_DOWN.store(down(VK_CONTROL), Ordering::Relaxed);
 }
 
 fn send_mask_key() {

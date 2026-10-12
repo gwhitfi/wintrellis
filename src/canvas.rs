@@ -21,10 +21,10 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT, DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
-    DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
-    DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory, IDWriteFactory, IDWriteFontCollection,
-    IDWriteTextFormat,
+    DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_PARAGRAPH_ALIGNMENT_CENTER,
+    DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_TEXT_METRICS, DWRITE_TRIMMING,
+    DWRITE_TRIMMING_GRANULARITY_CHARACTER, DWRITE_WORD_WRAPPING_NO_WRAP, DWriteCreateFactory,
+    IDWriteFactory, IDWriteFontCollection, IDWriteTextFormat,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Gdi::{
@@ -33,7 +33,7 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{ULW_ALPHA, UpdateLayeredWindow};
-use windows::core::{Result, w};
+use windows::core::{PCWSTR, Result, w};
 
 use crate::layout::Rect;
 
@@ -207,9 +207,20 @@ fn make_target(alpha: D2D1_ALPHA_MODE) -> Result<ID2D1DCRenderTarget> {
 /// Text centered (both ways) in the rectangle it's drawn into: Windows 11's UI font,
 /// `size` pixels tall, at `weight`.
 pub fn text_format(size: f32, weight: DWRITE_FONT_WEIGHT) -> Result<IDWriteTextFormat> {
+    format_in(w!("Segoe UI Variable Text"), size, weight)
+}
+
+/// Like `text_format`, in Windows 11's icon font: each icon is one character (e.g.
+/// '\u{E995}', a speaker at full volume).
+pub fn icon_format(size: f32) -> Result<IDWriteTextFormat> {
+    format_in(w!("Segoe Fluent Icons"), size, DWRITE_FONT_WEIGHT_NORMAL)
+}
+
+/// A centered text format in the installed font `family`.
+fn format_in(family: PCWSTR, size: f32, weight: DWRITE_FONT_WEIGHT) -> Result<IDWriteTextFormat> {
     unsafe {
         let format = text_factory()?.CreateTextFormat(
-            w!("Segoe UI Variable Text"),
+            family,
             None::<&IDWriteFontCollection>, // the fonts installed in Windows
             weight,
             DWRITE_FONT_STYLE_NORMAL,
