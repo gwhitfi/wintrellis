@@ -13,10 +13,10 @@ pub struct Theme {
     pub highlight: u32,
     /// Quiet things: empty workspaces, the search box's hint, "No matching apps".
     pub muted: u32,
-    /// Normal text: the search query, app names.
+    /// Normal text: the search query, app names, and current workspace's ring.
     pub text: u32,
-    /// Things that stand out: workspaces with windows, the current workspace's ring,
-    /// the search box's underline, the selected row's marker.
+    /// Things that stand out: workspaces with windows, the search box's underline,
+    /// the selected row's marker.
     pub accent: u32,
 }
 

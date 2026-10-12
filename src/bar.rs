@@ -581,6 +581,7 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
         let empty = brush(COLORREF(colors.muted))?;
         let on_accent = brush(text_on(accent))?;
         let format = canvas::text_format(px(FONT), DWRITE_FONT_WEIGHT_SEMI_BOLD)?;
+        let ring = brush(COLORREF(colors.text))?;
 
         // The bar: a pill as big as the window, less the shadow around it.
         let shadow = scale(SHADOW);
@@ -607,12 +608,7 @@ fn draw(target: &ID2D1RenderTarget, monitor: HMONITOR, at: Rect) -> Result<()> {
                 &empty
             };
             if usize::from(current) == i + 1 {
-                outline(
-                    target,
-                    pill(b, px(RING_GAP) + line / 2.0),
-                    &accent_brush,
-                    line,
-                );
+                outline(target, pill(b, px(RING_GAP) + line / 2.0), &ring, line);
             }
             let number: Vec<u16> = (i + 1).to_string().encode_utf16().collect();
             target.DrawText(
